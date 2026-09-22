@@ -1,0 +1,18 @@
+# Normalize line endings: LF in the repository and in the working tree.
+# This overrides core.autocrlf and prevents CR/LF warnings.
+* text=auto eol=lf
+
+# Windows-only script formats conventionally use CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never touch binary files.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.db binary
+*.sqlite binary
