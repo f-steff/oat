@@ -9,6 +9,7 @@ import {
   synthesizeReservedMessage,
   translatePromptBody,
   translateRequest,
+  translateV2Events,
   translateV2Response,
   unwrapV2Response,
 } from "../src/translate.js";
@@ -136,4 +137,39 @@ test("translateV2Response maps v2 providers to v1 /provider and /config/provider
   const config = translateV2Response("/config/providers", fixture("provider.json")) as Record<string, unknown>;
   assert.equal(Array.isArray(config.providers), true);
   assert.deepEqual(config.default, {});
+});
+
+/** Parse the captured `/api/event` stream into raw v2 event objects. */
+function fixtureEvents(): unknown[] {
+  const text = fs.readFileSync(path.join("test", "fixtures", "v2", "events.txt"), "utf8");
+  const out: unknown[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    try {
+      out.push(JSON.parse(line.slice(5).trim()));
+    } catch {
+      // ignore heartbeats/partials
+    }
+  }
+  return out;
+}
+
+test("translateV2Events maps the captured v2 stream to v1 event types", () => {
+  const types = new Set<string>();
+  let userParts = 0;
+  for (const raw of fixtureEvents()) {
+    for (const event of translateV2Events(raw)) {
+      types.add(event.type);
+      if (event.type === "message.part.updated") {
+        const part = event.properties.part as { type?: string } | undefined;
+        if (part?.type === "text") userParts += 1;
+      }
+    }
+  }
+  assert.ok(types.has("server.connected"), "server.connected");
+  assert.ok(types.has("session.updated"), "session.created -> session.updated");
+  assert.ok(types.has("message.updated"), "inbox/step -> message.updated");
+  assert.ok(types.has("message.part.updated"), "text/reasoning -> message.part.updated");
+  assert.ok(types.has("session.idle"), "execution.succeeded -> session.idle");
+  assert.ok(userParts >= 1, "user prompt part emitted");
 });

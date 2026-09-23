@@ -230,6 +230,128 @@ export function synthesizeReservedMessage(sessionId: string, body: unknown, now 
   };
 }
 
+/** A v1-style SSE payload, as the bridge expects (`type` + `properties`). */
+export interface V1Event {
+  type: string;
+  properties: Record<string, unknown>;
+}
+
+/** Build a v1 `message.part.updated` payload for a streamed text/reasoning part. */
+function partUpdated(sessionID: unknown, messageID: string, kind: "text" | "reasoning", text: unknown): V1Event {
+  return {
+    type: "message.part.updated",
+    properties: {
+      sessionID,
+      part: { id: `${messageID}_${kind}`, messageID, sessionID, type: kind, text: typeof text === "string" ? text : "" },
+    },
+  };
+}
+
+/**
+ * Translate one opencode v2 `/api/event` payload into a v1 `{type, properties}`
+ * event, or `null` when it has no v1 equivalent (e.g. heartbeats/instructions).
+ *
+ * This is best-effort: it covers the session lifecycle and streaming parts the
+ * bridge renders. Unknown v2 event types are dropped.
+ */
+export function translateV2Event(raw: unknown): V1Event | null {
+  const event = asRecord(raw);
+  if (!event) return null;
+  const type = typeof event.type === "string" ? event.type : "";
+  const data = asRecord(event.data) ?? {};
+  const sessionID = data.sessionID;
+  const messageID = typeof data.assistantMessageID === "string" ? data.assistantMessageID : undefined;
+  const created = typeof event.created === "number" ? event.created : undefined;
+
+  switch (type) {
+    case "server.connected":
+      return { type: "server.connected", properties: {} };
+    case "session.created": {
+      const location = asRecord(data.location);
+      return {
+        type: "session.updated",
+        properties: {
+          sessionID,
+          info: {
+            id: sessionID,
+            title: data.title,
+            directory: location?.directory,
+            time: { created },
+          },
+        },
+      };
+    }
+    case "session.inbox.enqueued":
+    case "session.inbox.delivered": {
+      const id = typeof data.inboxID === "string" ? data.inboxID : undefined;
+      if (!id) return null;
+      return {
+        type: "message.updated",
+        properties: { sessionID, info: { id, sessionID, role: "user", time: { created } } },
+      };
+    }
+    case "session.step.started":
+      if (!messageID) return null;
+      return {
+        type: "message.updated",
+        properties: { sessionID, info: { id: messageID, sessionID, role: "assistant", time: { created } } },
+      };
+    case "session.text.started":
+    case "session.text.delta":
+    case "session.text.ended":
+      if (!messageID) return null;
+      return partUpdated(sessionID, messageID, "text", data.delta ?? data.text);
+    case "session.reasoning.started":
+    case "session.reasoning.delta":
+    case "session.reasoning.ended":
+      if (!messageID) return null;
+      return partUpdated(sessionID, messageID, "reasoning", data.delta ?? data.text);
+    case "session.step.ended":
+      if (!messageID) return null;
+      return {
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: {
+            id: messageID,
+            sessionID,
+            role: "assistant",
+            time: { created, completed: created },
+            cost: data.cost,
+            tokens: data.tokens,
+            finish: data.finish,
+          },
+        },
+      };
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.ended":
+      return { type: "session.idle", properties: { sessionID } };
+    default:
+      return null;
+  }
+}
+
+/** Extra v1 events a v2 event expands into (e.g. the part for a user inbox item). */
+export function translateV2EventParts(raw: unknown): V1Event[] {
+  const event = asRecord(raw);
+  const data = asRecord(event?.data) ?? {};
+  if (event?.type === "session.inbox.enqueued" || event?.type === "session.inbox.delivered") {
+    const id = typeof data.inboxID === "string" ? data.inboxID : undefined;
+    if (!id) return [];
+    const payload = asRecord(asRecord(data.item)?.payload);
+    const text = typeof payload?.text === "string" ? payload.text : "";
+    return [partUpdated(data.sessionID, id, "text", text)];
+  }
+  return [];
+}
+
+/** All v1 events a single v2 event expands into (the main event plus any parts). */
+export function translateV2Events(raw: unknown): V1Event[] {
+  const main = translateV2Event(raw);
+  return [...(main ? [main] : []), ...translateV2EventParts(raw)];
+}
+
 /** Translate a downstream v1 request into the upstream request for a v2 backend. */
 export function translateRequest(
   method: string,

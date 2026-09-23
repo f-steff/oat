@@ -6,8 +6,8 @@ import { log } from "./logger.js";
 import type { Registry } from "./registry.js";
 import { pickBackend } from "./router.js";
 import { basicAuth } from "./discovery/discover.js";
-import { isReserve, synthesizeReservedMessage, translateRequest, translateV2Response } from "./translate.js";
-import { formatSseEvent, SseMerger, type SseEvent } from "./sse.js";
+import { isReserve, synthesizeReservedMessage, translateRequest, translateV2Events, translateV2Response } from "./translate.js";
+import { formatSseEvent, getData, splitSseEvents, SseMerger, type SseEvent } from "./sse.js";
 import type { Backend, OatConfig } from "./types.js";
 
 /** OAT's own semantic version, reported by `/global/health` and the control API. */
@@ -158,12 +158,34 @@ async function pumpOnce(
   if (!response.ok || !response.body) throw new Error(`upstream ${response.status}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  // Read chunks and emit every complete event.
+  const source = String(backend.port);
+  // v2 blocks are carried here; v1 blocks are carried inside the merger.
+  let carry = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    for (const event of merger.ingest(String(backend.port), decoder.decode(value, { stream: true }))) {
-      writeEvent(res, event, attribute);
+    const text = decoder.decode(value, { stream: true });
+    if (backend.kind !== "v2") {
+      for (const event of merger.ingest(source, text)) writeEvent(res, event, attribute);
+      continue;
+    }
+    // Parse each v2 event, translate it to v1, and reuse the merger for collapse/typing.
+    carry += text;
+    const { events, rest } = splitSseEvents(carry);
+    carry = rest;
+    for (const block of events) {
+      const data = getData(block);
+      if (!data) continue;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      for (const mapped of translateV2Events(raw)) {
+        const chunk = `data: ${JSON.stringify(mapped)}\n\n`;
+        for (const event of merger.ingest(source, chunk)) writeEvent(res, event, attribute);
+      }
     }
   }
 }
