@@ -198,6 +198,15 @@ oat opencode2 --server http://127.0.0.1:4096   # or attach to a specific server
 - Real-opencode end-to-end tests are local/manual (they need opencode installed). Cross-OS checks run on
   Windows + Linux (Docker) locally and include a macOS CI job (no macOS Docker image exists).
 
+## Known issues
+
+Bugs we are aware of, with upstream links where the cause is outside OAT.
+
+- **A prompt sent from the phone appears twice in the local opencode TUI** (the model/tool runs once).
+  The Sesori Bridge reserves a user message and then re-dispatches it with the same `messageID` and
+  `parts`, so opencode appends the text a second time. OAT only proxies the two calls. Tracked upstream:
+  [sesori-ai/sesori_apps_monorepo#1596](https://github.com/sesori-ai/sesori_apps_monorepo/issues/1596).
+
 ## Run at login (optional)
 
 - **Windows:** Task Scheduler → at logon → `oat start` (user context).
