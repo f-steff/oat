@@ -7,8 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import { defaultConfig } from "./config.js";
 import { callControl, fetchIdentity } from "./control.js";
-import { discoverBackends, makeHttpProbe } from "./discovery/discover.js";
+import { discoverBackends, makeHttpProbe, probeV2Endpoint } from "./discovery/discover.js";
 import { listListeners } from "./discovery/ports.js";
+import { readV2Service } from "./discovery/service.js";
 import { expandTokens, resolveExecutable, resolveOpencode2Executable, resolveOpencodeExecutable } from "./launcher.js";
 import { log, logFilePath, setLogFile } from "./logger.js";
 import { Registry } from "./registry.js";
@@ -405,6 +406,14 @@ async function runDaemon(config: OatConfig): Promise<void> {
       // fresh discovery candidate.
       const skipPorts = new Set<number>([config.port, ...registry.managedPorts()]);
       const backends = await discoverBackends(listeners, { probe, skipPorts });
+      // Also attach to a user-started v2 shared service (its password lives on disk).
+      const service = await readV2Service();
+      if (service) {
+        const extra = await probeV2Endpoint(service.url, service.password, config.probeTimeoutMs);
+        if (extra && extra.port && !skipPorts.has(extra.port) && !backends.some((b) => b.port === extra.port)) {
+          backends.push(extra);
+        }
+      }
       registry.set(backends);
       const summary = backends.map((b) => `${b.port}${b.primaryDirectory ? `@${b.primaryDirectory}` : ""}`).join(", ");
       log.info(`discovered ${backends.length} backend(s): ${summary || "none"}`);

@@ -10,6 +10,7 @@ import {
   translatePromptBody,
   translateRequest,
   translateV2Events,
+  translateV2Message,
   translateV2Response,
   unwrapV2Response,
 } from "../src/translate.js";
@@ -172,4 +173,19 @@ test("translateV2Events maps the captured v2 stream to v1 event types", () => {
   assert.ok(types.has("message.part.updated"), "text/reasoning -> message.part.updated");
   assert.ok(types.has("session.idle"), "execution.succeeded -> session.idle");
   assert.ok(userParts >= 1, "user prompt part emitted");
+});
+
+test("the synthesized reserve matches the mapped v2 user message shape", () => {
+  const synth = synthesizeReservedMessage(
+    "ses_1",
+    { messageID: "msg_1", parts: [{ type: "text", text: "hi" }] },
+    1,
+  ) as { info: Record<string, unknown>; parts: Array<Record<string, unknown>> };
+  const mapped = translateV2Message({ id: "msg_1", time: { created: 1 }, type: "user", text: "hi" }, "ses_1") as {
+    info: Record<string, unknown>;
+    parts: Array<Record<string, unknown>>;
+  };
+  assert.deepEqual(Object.keys(synth.info).sort(), Object.keys(mapped.info).sort());
+  assert.deepEqual(Object.keys(synth.parts[0] ?? {}).sort(), Object.keys(mapped.parts[0] ?? {}).sort());
+  assert.equal(synth.parts[0]?.type, mapped.parts[0]?.type);
 });

@@ -145,3 +145,38 @@ export async function discoverBackends(
   // Keep only successful probes, ordered deterministically by port.
   return results.filter((backend): backend is Backend => backend !== null).sort((a, b) => a.port - b.port);
 }
+
+/**
+ * Probe a known v2 endpoint directly (e.g. from `readV2Service`) and return a
+ * Backend, or null when it does not answer as a v2 server.
+ */
+export async function probeV2Endpoint(
+  baseUrl: string,
+  password: string,
+  timeoutMs = 1_000,
+  now: () => number = Date.now,
+): Promise<Backend | null> {
+  const info = asRecord(await getJson(`${baseUrl}/api/info`, timeoutMs, password));
+  if (!info || typeof info.version !== "string") return null;
+  const location = asRecord(await getJson(`${baseUrl}/api/location`, timeoutMs, password));
+  const primaryDirectory = typeof location?.directory === "string" ? location.directory : null;
+  // OAT's own maintenance/anchor v2 servers are never user projects.
+  if (isOatAnchorDir(primaryDirectory)) return null;
+  let port = 0;
+  try {
+    port = Number(new URL(baseUrl).port) || 0;
+  } catch {
+    port = 0;
+  }
+  return {
+    port,
+    pid: typeof info.pid === "number" ? info.pid : null,
+    baseUrl,
+    primaryDirectory,
+    version: info.version,
+    healthy: true,
+    lastSeen: now(),
+    kind: "v2",
+    password,
+  };
+}
