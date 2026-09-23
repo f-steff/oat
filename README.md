@@ -153,3 +153,5 @@ npm unlink -g oat
 ## License
 
 MIT — see [`LICENSE`](LICENSE). © 2026 f-steff.
+
+Contributions, issues and ideas are welcome via GitHub.
