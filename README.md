@@ -36,7 +36,7 @@ cd oat
 npm install
 npm run build      # required: the `oat` shim runs the compiled dist/
 npm link           # puts `oat` on your PATH (Windows: %APPDATA%\npm)
-oat version        # expect: 0.1.0
+oat version        # expect: 0.2.0
 ```
 
 Prefer not to install a global command? Run from the repo after `npm run build`:

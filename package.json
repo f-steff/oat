@@ -1,6 +1,6 @@
 {
   "name": "oat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OAT: The Gathering - OpenCode Address Translation. A local multiplexer that lets one Sesori Bridge connection see and drive all independent opencode instances.",
   "license": "MIT",
   "author": "Flemming Steffensen (f-steff) <fsteff@gmail.com>",

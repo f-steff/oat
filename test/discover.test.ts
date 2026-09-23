@@ -92,7 +92,7 @@ test("discoverBackends honors skipPorts", async (t) => {
 
 // Another OAT instance advertises an `oat/` version and must never be treated as opencode.
 test("discoverBackends ignores an OAT instance", async (t) => {
-  const oat = await startServer({ healthy: true, directory: "/x", version: "oat/0.1.0" });
+  const oat = await startServer({ healthy: true, directory: "/x", version: "oat/0.2.0" });
   t.after(() => close(oat.server));
 
   const found = await discoverBackends([{ port: oat.port, pid: 1, address: "127.0.0.1" }], {

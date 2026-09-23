@@ -11,7 +11,7 @@ import { formatSseEvent, getData, splitSseEvents, SseMerger, type SseEvent } fro
 import type { Backend, OatConfig } from "./types.js";
 
 /** OAT's own semantic version, reported by `/global/health` and the control API. */
-export const OAT_VERSION = "0.1.0";
+export const OAT_VERSION = "0.2.0";
 /** Reserved URL prefix for the local control API. */
 export const OAT_CONTROL_PREFIX = "/__oat";
 

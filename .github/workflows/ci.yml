@@ -1,9 +1,9 @@
 name: CI
 
+# Run on pull requests only: tests gate the merge, so there is no separate run
+# on `main` after a squash-merge.
 on:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
 
 permissions:
