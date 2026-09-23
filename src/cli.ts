@@ -383,7 +383,7 @@ async function runDaemon(config: OatConfig): Promise<void> {
 
   const registry = new Registry();
   // Probe v1 (`/global/health`) then v2 (`/api/info`, Basic) with the known password.
-  const probe = makeHttpProbe(config.probeTimeoutMs, { v2Password: config.v2Password });
+  const probe = makeHttpProbe(config.probeTimeoutMs, { v2Password: config.v2Password, v1Password: config.v1Password });
   const state: OatState = {
     pid: process.pid,
     pidStartMarker: null,
@@ -408,6 +408,7 @@ async function runDaemon(config: OatConfig): Promise<void> {
         probe,
         skipPorts,
         v2Password: config.v2Password,
+        v1Password: config.v1Password,
         anchorDir: path.join(config.stateDir, "anchor"),
       });
       // Also attach to a user-started v2 shared service (its password lives on disk).

@@ -49,6 +49,8 @@ async function getJson(url: string, timeoutMs: number, password?: string): Promi
 export interface HttpProbeOptions {
   /** Password used to authenticate against v2 servers (`OAT_V2_PASSWORD`). */
   v2Password?: string;
+  /** Password used to authenticate against v1 servers (`OPENCODE_SERVER_PASSWORD`). */
+  v1Password?: string;
 }
 
 /** Build the default HTTP probe: v1 `/global/health` + `/path`, v2 `/api/info` + `/api/location`. */
@@ -56,7 +58,11 @@ export function makeHttpProbe(timeoutMs = 1_000, options: HttpProbeOptions = {})
   return {
     // v1 answers `{healthy:true, version}`; otherwise try v2's `/api/info` with Basic auth.
     async health(baseUrl) {
-      const v1 = asRecord(await getJson(`${baseUrl}/global/health`, timeoutMs));
+      let v1 = asRecord(await getJson(`${baseUrl}/global/health`, timeoutMs));
+      // A password-protected v1 server rejects the anonymous probe; retry with Basic.
+      if (v1?.healthy !== true && options.v1Password) {
+        v1 = asRecord(await getJson(`${baseUrl}/global/health`, timeoutMs, options.v1Password));
+      }
       if (v1?.healthy === true) {
         const version = typeof v1.version === "string" ? v1.version : null;
         // Another OAT instance answers /global/health too; never treat it as opencode.
@@ -77,7 +83,7 @@ export function makeHttpProbe(timeoutMs = 1_000, options: HttpProbeOptions = {})
         const directory = info?.directory ?? asRecord(info?.data)?.directory;
         return typeof directory === "string" ? directory : null;
       }
-      const json = asRecord(await getJson(`${baseUrl}/path`, timeoutMs));
+      const json = asRecord(await getJson(`${baseUrl}/path`, timeoutMs, options.v1Password));
       return typeof json?.directory === "string" ? json.directory : null;
     },
   };
@@ -93,6 +99,8 @@ export interface DiscoverOptions {
   now?: () => number;
   /** Password used to authenticate against v2 backends (attached to detected v2 servers). */
   v2Password?: string;
+  /** Password used to authenticate against v1 backends (attached to detected v1 servers). */
+  v1Password?: string;
   /**
    * This daemon's own maintenance-worker directory. Servers found there are
    * kept (marked `anchor: true`) so they can be adopted instead of duplicated;
@@ -116,7 +124,7 @@ export async function discoverBackends(
   listeners: RawListener[],
   options: DiscoverOptions = {},
 ): Promise<Backend[]> {
-  const probe = options.probe ?? makeHttpProbe(1_000, { v2Password: options.v2Password });
+  const probe = options.probe ?? makeHttpProbe(1_000, { v2Password: options.v2Password, v1Password: options.v1Password });
   const now = options.now ?? Date.now;
   const skip = options.skipPorts ?? new Set<number>();
   // De-duplicate ports and drop any the caller asked to skip.
@@ -146,8 +154,9 @@ export async function discoverBackends(
         lastSeen: now(),
         kind,
         ...(ours ? { anchor: true } : {}),
-        // A detected v2 backend is only reachable because we know the password.
+        // A detected backend is only reachable because we know its password.
         ...(kind === "v2" && options.v2Password ? { password: options.v2Password } : {}),
+        ...(kind === "v1" && options.v1Password ? { password: options.v1Password } : {}),
       };
     }),
   );

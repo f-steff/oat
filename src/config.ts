@@ -58,5 +58,9 @@ export function defaultConfig(overrides: Partial<OatConfig> = {}): OatConfig {
     v2Password: overrides.v2Password ?? process.env.OAT_V2_PASSWORD ?? newToken(),
     translateV2: overrides.translateV2 ?? process.env.OAT_TRANSLATE_V2 !== "0",
     backendVersion: overrides.backendVersion ?? (process.env.OAT_BACKEND_VERSION === "v2" ? "v2" : "v1"),
+    // v1 servers protected with OPENCODE_SERVER_PASSWORD use the same Basic scheme.
+    ...(overrides.v1Password ?? process.env.OAT_V1_PASSWORD ?? process.env.OPENCODE_SERVER_PASSWORD
+      ? { v1Password: overrides.v1Password ?? process.env.OAT_V1_PASSWORD ?? process.env.OPENCODE_SERVER_PASSWORD }
+      : {}),
   };
 }

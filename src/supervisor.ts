@@ -185,9 +185,13 @@ export class BackendSupervisor {
       logFd = undefined;
     }
     const stdio: "ignore" | Array<"ignore" | number> = logFd !== undefined ? ["ignore", logFd, logFd] : "ignore";
-    // v2 servers use `opencode2 serve --port N` with an OAT-chosen Basic-auth password.
+    // v2 servers use an OAT-chosen password; v1 servers reuse OPENCODE_SERVER_PASSWORD if set.
     const env =
-      this.kind === "v2" ? { ...process.env, OPENCODE_SERVER_PASSWORD: this.config.v2Password } : process.env;
+      this.kind === "v2"
+        ? { ...process.env, OPENCODE_SERVER_PASSWORD: this.config.v2Password }
+        : this.config.v1Password
+          ? { ...process.env, OPENCODE_SERVER_PASSWORD: this.config.v1Password }
+          : process.env;
     const { command, args } =
       this.kind === "v2"
         ? {

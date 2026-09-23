@@ -95,4 +95,6 @@ export interface OatConfig {
   translateV2: boolean;
   /** Which opencode generation OAT starts for projects (`OAT_BACKEND_VERSION=v2`). */
   backendVersion: BackendKind;
+  /** Password for v1 servers protected with `OPENCODE_SERVER_PASSWORD` (optional). */
+  v1Password?: string;
 }

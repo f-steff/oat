@@ -114,3 +114,54 @@ test("readV2Service reads url+password from the service registration", async (t)
   const paths = v2ServicePaths({ LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" }, "win32", home);
   assert.ok(paths.some((p) => p.includes("AppData") && p.includes("opencode")));
 });
+
+/** Start a fake password-protected opencode v1 server (`/global/health` + `/path`). */
+function startV1Auth(directory: string): Promise<{ server: http.Server; port: number }> {
+  const expected = basicAuth(PASSWORD);
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.headers.authorization !== expected) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      if (url.pathname === "/global/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ healthy: true, version: "1.18.32" }));
+        return;
+      }
+      if (url.pathname === "/path") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ directory }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      resolve({ server, port });
+    });
+  });
+}
+
+test("makeHttpProbe discovers a password-protected v1 server", async (t) => {
+  const { server, port } = await startV1Auth("C:\\work\\v1");
+  t.after(() => server.close());
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const ok = await makeHttpProbe(1_000, { v1Password: PASSWORD }).health(baseUrl);
+  assert.equal(ok?.healthy, true);
+  assert.equal(ok?.kind, "v1");
+  assert.equal(ok?.version, "1.18.32");
+  // The anonymous probe is rejected by the 401.
+  assert.equal(await makeHttpProbe(1_000, {}).health(baseUrl), null);
+  assert.equal(await makeHttpProbe(1_000, { v1Password: PASSWORD }).path(baseUrl, "v1"), "C:\\work\\v1");
+
+  const backends = await discoverBackends([{ port, pid: 7, address: "127.0.0.1" }], { v1Password: PASSWORD });
+  assert.equal(backends.length, 1);
+  assert.equal(backends[0]?.kind, "v1");
+  assert.equal(backends[0]?.password, PASSWORD);
+});

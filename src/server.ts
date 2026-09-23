@@ -153,7 +153,7 @@ async function pumpOnce(
   // v1 streams `/global/event`; v2 streams `/api/event` and needs Basic auth.
   const path = backend.kind === "v2" ? "/api/event" : "/global/event";
   const headers: Record<string, string> = { accept: "text/event-stream" };
-  if (backend.kind === "v2" && backend.password) headers.authorization = basicAuth(backend.password);
+  if (backend.password) headers.authorization = basicAuth(backend.password);
   const response = await fetch(`${backend.baseUrl}${path}`, { headers, signal });
   if (!response.ok || !response.body) throw new Error(`upstream ${response.status}`);
   const reader = response.body.getReader();
@@ -270,7 +270,7 @@ async function fetchSessionDirectory(backend: Backend, sessionId: string): Promi
   try {
     const v2 = backend.kind === "v2";
     const headers: Record<string, string> = {};
-    if (v2 && backend.password) headers.authorization = basicAuth(backend.password);
+    if (backend.password) headers.authorization = basicAuth(backend.password);
     const path = v2 ? `/api/session/${sessionId}` : `/session/${sessionId}`;
     const response = await fetch(`${backend.baseUrl}${path}`, { signal: AbortSignal.timeout(10_000), headers });
     if (!response.ok) return null;
@@ -445,8 +445,8 @@ async function handleProxy(
   const headers: Record<string, string | string[] | undefined> = { ...req.headers };
   for (const header of HOP_BY_HOP) delete headers[header];
   delete headers["authorization"];
-  // v2 backends require HTTP Basic auth with the password OAT knows.
-  if (backend.kind === "v2" && backend.password) headers["authorization"] = basicAuth(backend.password);
+  // Password-protected backends (v1 or v2) require HTTP Basic auth.
+  if (backend.password) headers["authorization"] = basicAuth(backend.password);
 
   // Stream the request upstream and the response back down (no buffering).
   const upstream = http.request(
@@ -497,7 +497,7 @@ function handleUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer, 
       if (Array.isArray(value)) for (const item of value) lines.push(`${key}: ${item}`);
       else if (value !== undefined) lines.push(`${key}: ${value}`);
     }
-    if (decision.backend.kind === "v2" && decision.backend.password) {
+    if (decision.backend.password) {
       lines.push(`authorization: ${basicAuth(decision.backend.password)}`);
     }
     lines.push("", "");
