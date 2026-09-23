@@ -10,7 +10,7 @@ import { callControl, fetchIdentity } from "./control.js";
 import { discoverBackends, makeHttpProbe, probeV2Endpoint } from "./discovery/discover.js";
 import { listListeners } from "./discovery/ports.js";
 import { readV2Service } from "./discovery/service.js";
-import { expandTokens, resolveExecutable, resolveOpencode2Executable, resolveOpencodeExecutable } from "./launcher.js";
+import { expandTokens, opencode2LaunchArgs, resolveExecutable, resolveOpencode2Executable, resolveOpencodeExecutable } from "./launcher.js";
 import { log, logFilePath, setLogFile } from "./logger.js";
 import { Registry } from "./registry.js";
 import { createMuxServer, OAT_VERSION, type ControlHandlers } from "./server.js";
@@ -303,8 +303,7 @@ async function runOpencode2(config: OatConfig, args: string[]): Promise<number> 
   const directory = process.cwd();
   const { command, shell } = resolveOpencode2Executable(config.opencode2Bin, config.stateDir);
   // Default to a private server (don't hijack v2's shared background service).
-  const targeted = args.some((arg) => arg === "--standalone" || arg === "--server" || arg.startsWith("--server="));
-  const finalArgs = targeted ? args : ["--standalone", ...args];
+  const finalArgs = opencode2LaunchArgs(args);
   console.log(`oat: starting opencode v2 in this terminal (${directory})`);
   // Inherit stdio so the TUI runs here; expose the known server password to it.
   const child = spawn(command, finalArgs, {

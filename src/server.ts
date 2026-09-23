@@ -266,12 +266,20 @@ function isRunAction(method: string, pathname: string): boolean {
 }
 
 /** Ask a backend for a session's directory (used when only the id is known). */
-async function fetchSessionDirectory(baseUrl: string, sessionId: string): Promise<string | null> {
+async function fetchSessionDirectory(backend: Backend, sessionId: string): Promise<string | null> {
   try {
-    const response = await fetch(`${baseUrl}/session/${sessionId}`, { signal: AbortSignal.timeout(10_000) });
+    const v2 = backend.kind === "v2";
+    const headers: Record<string, string> = {};
+    if (v2 && backend.password) headers.authorization = basicAuth(backend.password);
+    const path = v2 ? `/api/session/${sessionId}` : `/session/${sessionId}`;
+    const response = await fetch(`${backend.baseUrl}${path}`, { signal: AbortSignal.timeout(10_000), headers });
     if (!response.ok) return null;
-    const body = (await response.json()) as { directory?: unknown };
-    return typeof body.directory === "string" ? body.directory : null;
+    const body = (await response.json()) as Record<string, unknown>;
+    // v2 wraps the session in `{ data }` and nests the directory under `location`.
+    const data = v2 ? ((body.data as Record<string, unknown>) ?? body) : body;
+    const location = data.location as { directory?: unknown } | undefined;
+    const directory = location?.directory ?? data.directory;
+    return typeof directory === "string" ? directory : null;
   } catch {
     return null;
   }
@@ -380,7 +388,7 @@ async function handleProxy(
       let target = directory ?? null;
       if (!target && sessionId) {
         const anchor = await deps.supervisor.ensureAnchor();
-        if (anchor) target = await fetchSessionDirectory(anchor.baseUrl, sessionId);
+        if (anchor) target = await fetchSessionDirectory(anchor, sessionId);
       }
       if (target) {
         const managed = await deps.supervisor.ensure(target, sessionId ?? undefined);

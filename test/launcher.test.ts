@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildLaunchSpec, expandTokens, projectTitle } from "../src/launcher.js";
+import { buildLaunchSpec, expandTokens, opencode2LaunchArgs, projectTitle } from "../src/launcher.js";
 
 // Window titles must be short and derive from the project folder name.
 test("projectTitle is short and path-based", () => {
   assert.equal(projectTitle("C:\\Projects\\ccs-linux-container"), "oat: ccs-linux-container");
   assert.equal(projectTitle("/home/user/proj/"), "oat: proj");
+});
+
+// `oat opencode2` forces a private server unless the user targeted one.
+test("opencode2LaunchArgs forces --standalone unless a target is given", () => {
+  assert.deepEqual(opencode2LaunchArgs([]), ["--standalone"]);
+  assert.deepEqual(opencode2LaunchArgs(["-s", "ses_1"]), ["--standalone", "-s", "ses_1"]);
+  assert.deepEqual(opencode2LaunchArgs(["--standalone", "x"]), ["--standalone", "x"]);
+  assert.deepEqual(opencode2LaunchArgs(["--server", "http://h:1"]), ["--server", "http://h:1"]);
+  assert.deepEqual(opencode2LaunchArgs(["--server=http://h:1"]), ["--server=http://h:1"]);
 });
 
 // Windows uses Windows Terminal with a short title and the project as cwd.

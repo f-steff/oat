@@ -100,6 +100,12 @@ export function resolveOpencode2Executable(bin: string, stateDir = defaultStateD
   return { command: bin, shell: false };
 }
 
+/** Build the args for `oat opencode2`: force a private server unless the user targeted one. */
+export function opencode2LaunchArgs(args: string[]): string[] {
+  const targeted = args.some((arg) => arg === "--standalone" || arg === "--server" || arg.startsWith("--server="));
+  return targeted ? args : ["--standalone", ...args];
+}
+
 /** Kill a process by pid (no tree kill, so no console/tab side effects). */
 export function killProcess(pid: number): void {
   if (!pid || pid < 0) return;
