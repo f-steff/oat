@@ -59,16 +59,27 @@ function npmGlobalBin() {
 }
 
 // The package ships a native launcher at bin/opencode(.exe); npm may also place
-// a compiled binary elsewhere, so probe the known locations.
-function findBinary(prefix) {
-  const pkgDir = join(prefix, "node_modules", "@opencode", "cli");
-  const candidates = [
-    join(pkgDir, "bin", "opencode.exe"),
-    join(pkgDir, "bin", "opencode"),
-    join(pkgDir, "opencode.exe"),
-    join(pkgDir, "opencode"),
+// a compiled binary elsewhere, so probe the known locations. Global installs use
+// <prefix>/node_modules on Windows and <prefix>/lib/node_modules on POSIX.
+function packageDirs(prefix) {
+  return [
+    join(prefix, "node_modules", "@opencode", "cli"),
+    join(prefix, "lib", "node_modules", "@opencode", "cli"),
   ];
-  return candidates.find((c) => existsSync(c)) ?? null;
+}
+
+function findBinary(prefix) {
+  for (const pkgDir of packageDirs(prefix)) {
+    const candidates = [
+      join(pkgDir, "bin", "opencode.exe"),
+      join(pkgDir, "bin", "opencode"),
+      join(pkgDir, "opencode.exe"),
+      join(pkgDir, "opencode"),
+    ];
+    const found = candidates.find((c) => existsSync(c));
+    if (found) return found;
+  }
+  return null;
 }
 
 function writeWrappers(binary, binDir) {
@@ -142,9 +153,9 @@ function install(args) {
 
   const binary = findBinary(prefix);
   if (!binary) {
-    const listing = safeList(join(prefix, "node_modules", "@opencode", "cli", "bin"));
+    const listing = safeList(join(packageDirs(prefix)[1], "bin")) || safeList(join(packageDirs(prefix)[0], "bin"));
     process.stderr.write(
-      `\nInstalled, but could not find the v2 binary. Looked under ${prefix}\\node_modules\\@opencode\\cli.\n` +
+      `\nInstalled, but could not find the v2 binary. Looked under:\n  ${packageDirs(prefix).join("\n  ")}\n` +
         `Bin dir contains: ${listing || "(missing)"}\n`,
     );
     return 1;
