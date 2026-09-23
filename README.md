@@ -125,6 +125,7 @@ The v2 path is newer and less battle-tested than v1; see Known limitations.
 | `OAT_OPENCODE2_BIN` | `opencode2` | opencode v2 executable (isolated install or PATH) |
 | `OAT_OPENCODE2_ARGS` | `serve --port {host_port} --hostname {host}` | Args for a managed v2 server |
 | `OAT_V2_PASSWORD` | generated per daemon | Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 servers |
+| `OAT_V1_PASSWORD` | `OPENCODE_SERVER_PASSWORD` | Password for password-protected v1 servers (Basic auth) |
 | `OAT_TRANSLATE_V2` | `1` | Translate v1<->v2 for the bridge (`0` disables) |
 | `OAT_MAX_INSTANCES` | `32` | Safety cap on concurrently running OAT-started instances |
 | `OAT_SPAWNS_PER_MINUTE` | `6` | Burst guard: max new instances started per rolling minute |
