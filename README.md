@@ -41,6 +41,26 @@ oat version        # expect: 0.1.0
 
 Prefer not to install a global command? Run from the repo: `node dist/cli.js <command>`.
 
+### Running opencode v1 and v2 side by side
+
+opencode v2 (`@opencode/cli`) also ships an `opencode` binary, so installing it globally would shadow
+v1. The helper installs v2 into an isolated prefix and exposes only an `opencode2` command, leaving v1's
+`opencode` untouched:
+
+```bash
+npm run opencode2:install    # installs @opencode/cli into <state>/oat/opencode2; creates `opencode2`
+opencode --version           # v1 (unchanged)
+opencode2 --version          # v2
+npm run opencode2:status     # show the isolated prefix and wrapper paths
+npm run opencode2:uninstall  # remove the `opencode2` wrapper and the isolated install
+```
+
+The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall can select the native
+binary (npm blocks install scripts by default on this machine). Override locations with
+`npm run opencode2:install -- --prefix <dir> --bin-dir <dir>`.
+
+> opencode v2 routing/launcher support in OAT is still in progress on this branch.
+
 ## Start
 
 ```bash
