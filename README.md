@@ -39,7 +39,8 @@ npm link           # puts `oat` on your PATH (Windows: %APPDATA%\npm)
 oat version        # expect: 0.1.0
 ```
 
-Prefer not to install a global command? Run from the repo: `node dist/cli.js <command>`.
+Prefer not to install a global command? Run from the repo after `npm run build`:
+`bin/oat <command>` (POSIX) or `bin\oat <command>` (Windows), or `node dist/cli.js <command>`.
 
 ### Running opencode v1 and v2 side by side
 
