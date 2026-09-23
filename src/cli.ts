@@ -382,7 +382,8 @@ async function runDaemon(config: OatConfig): Promise<void> {
   );
 
   const registry = new Registry();
-  const probe = makeHttpProbe(config.probeTimeoutMs);
+  // Probe v1 (`/global/health`) then v2 (`/api/info`, Basic) with the known password.
+  const probe = makeHttpProbe(config.probeTimeoutMs, { v2Password: config.v2Password });
   const state: OatState = {
     pid: process.pid,
     pidStartMarker: null,

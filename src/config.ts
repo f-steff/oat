@@ -57,5 +57,6 @@ export function defaultConfig(overrides: Partial<OatConfig> = {}): OatConfig {
     // Stable per-daemon password for v2 backends (propagated to the daemon via env).
     v2Password: overrides.v2Password ?? process.env.OAT_V2_PASSWORD ?? newToken(),
     translateV2: overrides.translateV2 ?? process.env.OAT_TRANSLATE_V2 !== "0",
+    backendVersion: overrides.backendVersion ?? (process.env.OAT_BACKEND_VERSION === "v2" ? "v2" : "v1"),
   };
 }

@@ -106,6 +106,31 @@ duplicate `server.connected` events are collapsed, and upstreams reconnect with 
 | **Anchors never listed; reaped on start/stop** | Orphaned workers cannot masquerade as projects. |
 | **`oat stop` kills only the daemon pid** | Never closes your terminal windows. |
 
+## opencode v2 coexistence
+
+opencode v2 changes the model: endpoints live under `/api/*` behind HTTP Basic auth (user `opencode`,
+password printed or set via `OPENCODE_SERVER_PASSWORD`), the CLI ships as `@opencode/cli` with an
+`opencode2` bin, and by default clients share one background server (`--standalone` gives a private one).
+
+OAT keeps v1 as the default and adds v2 as a peer:
+
+- **Detection** (`discovery/discover.ts`): probe v1 `/global/health`, else v2 `/api/info` with the known
+  password; each `Backend` is tagged `kind: "v1" | "v2"` and, when known, carries its `password`.
+- **Managed backends** (`supervisor.ts`): with `OAT_BACKEND_VERSION=v2`, start
+  `opencode2 serve --port <n> --hostname <h>` per project (cwd = project) with an OAT-chosen
+  `OPENCODE_SERVER_PASSWORD`; health uses v2's `/api/info`. v2 lazy starts are hidden servers (the user
+  runs the TUI via `oat opencode2`), unlike v1's visible-terminal default.
+- **Auth** (`server.ts`): the proxy and WebSocket replay add `Authorization: Basic` for v2 backends.
+- **Translation** (`translate.ts`, `OAT_TRANSLATE_V2`): the bridge speaks v1, so OAT maps the v1 routes
+  it uses onto v2 — `/session/:id/{message,prompt_async}` → `/api/session/:id/prompt`, `abort` →
+  `interrupt`, `/path` → `/api/location`, etc. — passes `x-opencode-directory` as the `directory` query,
+  unwraps v2's `{data}` envelopes, and answers a v1 `noReply` "reserve" locally (v2 has no reserve and
+  would otherwise double-admit the user message). v2 `/api/event` is fanned in like v1 `/global/event`.
+- **`oat opencode2`** (`cli.ts`): run the v2 TUI with `--standalone` and export the password, so OAT can
+  discover and route to it.
+
+This layer is deliberately partial and toggleable: set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
+
 ## 4. Learnings (brief)
 
 - Interactive opencode exposes **no TCP port** unless a network flag is passed → OAT must inject a port.

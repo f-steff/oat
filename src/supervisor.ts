@@ -4,11 +4,20 @@ import net from "node:net";
 import path from "node:path";
 
 import { log } from "./logger.js";
-import { buildLaunchSpec, expandTokens, killProcess, launchTerminal, resolveOpencodeExecutable, type LaunchSpec } from "./launcher.js";
+import {
+  buildLaunchSpec,
+  expandTokens,
+  killProcess,
+  launchTerminal,
+  resolveOpencode2Executable,
+  resolveOpencodeExecutable,
+  type LaunchSpec,
+} from "./launcher.js";
+import { basicAuth } from "./discovery/discover.js";
 import type { Registry } from "./registry.js";
 import { isProcessAlive } from "./state.js";
 import { normalizeDir } from "./router.js";
-import type { Backend, OatConfig } from "./types.js";
+import type { Backend, BackendKind, OatConfig } from "./types.js";
 
 /** A process started by the supervisor. */
 export interface SpawnedBackend {
@@ -65,11 +74,17 @@ function freePort(): Promise<number> {
   });
 }
 
-/** Probe a backend's `/global/health` with a short timeout. */
-async function probeHealth(port: number): Promise<boolean> {
+/** Probe a backend's health (v1 `/global/health`, v2 `/api/info` with Basic auth). */
+async function probeHealth(port: number, kind: BackendKind = "v1", password?: string): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1_000);
   try {
+    if (kind === "v2") {
+      const headers: Record<string, string> = password ? { authorization: basicAuth(password) } : {};
+      const response = await fetch(`http://127.0.0.1:${port}/api/info`, { signal: controller.signal, headers });
+      const body = (await response.json()) as { version?: unknown };
+      return response.ok && typeof body.version === "string";
+    }
     const response = await fetch(`http://127.0.0.1:${port}/global/health`, { signal: controller.signal });
     // Only a healthy opencode body counts as success.
     const body = (await response.json()) as { healthy?: boolean };
@@ -88,6 +103,8 @@ async function probeHealth(port: number): Promise<boolean> {
 export class BackendSupervisor {
   private readonly config: OatConfig;
   private readonly registry: Registry;
+  /** Which opencode generation this supervisor starts (v1 `serve`, or v2 `opencode2 serve`). */
+  private readonly kind: BackendKind;
   private readonly spawnBackend: (port: number, directory: string) => SpawnedBackend;
   private readonly probe: (port: number) => Promise<boolean>;
   private readonly findPort: () => Promise<number>;
@@ -127,11 +144,14 @@ export class BackendSupervisor {
   /** Build a supervisor, defaulting to real process/net/fetch implementations. */
   constructor(options: SupervisorOptions) {
     this.config = options.config;
+    this.kind = this.config.backendVersion;
     this.registry = options.registry;
     this.now = options.now ?? Date.now;
     this.idleSweepMs = options.idleSweepMs ?? 60_000;
     this.healthTimeoutMs = options.healthTimeoutMs ?? 30_000;
-    this.probe = options.probeHealth ?? probeHealth;
+    this.probe =
+      options.probeHealth ??
+      ((port) => probeHealth(port, this.kind, this.kind === "v2" ? this.config.v2Password : undefined));
     this.findPort = options.findFreePort ?? freePort;
     this.useTerminal = options.launchTerminal ?? false;
     this.refresh = options.refresh;
@@ -143,43 +163,52 @@ export class BackendSupervisor {
     this.launchSpec =
       options.launchSpec ??
       ((directory, opencodeArgs) => buildLaunchSpec(directory, process.platform, this.config.launchCommand, opencodeArgs));
-    // Default spawner launches `opencode serve` detached in the target directory,
-    // with no console window and output redirected to a per-backend log file.
-    this.spawnBackend =
-      options.spawnBackend ??
-      ((port, directory) => {
-        const { command } = resolveOpencodeExecutable(this.config.opencodeBin);
-        // Redirect server output to a log file.
-        const logDir = path.join(this.config.stateDir, "logs");
-        let logFd: number | undefined;
-        try {
-          fs.mkdirSync(logDir, { recursive: true });
-          logFd = fs.openSync(path.join(logDir, `opencode-${port}.log`), "a");
-        } catch {
-          logFd = undefined;
-        }
-        const stdio: "ignore" | Array<"ignore" | number> = logFd !== undefined ? ["ignore", logFd, logFd] : "ignore";
-        // No shell: a shell would flash a console window on Windows.
-        const child = spawn(command, ["serve", "--port", String(port)], {
-          cwd: directory,
-          detached: true,
-          stdio,
-          windowsHide: true,
-        });
-        // A failed spawn (missing binary) must not crash the daemon.
-        child.on("error", (error) => log.warn(`supervisor: failed to start opencode: ${error.message}`));
-        // The child holds the descriptor now; close our copy.
-        if (logFd !== undefined) {
-          try {
-            fs.closeSync(logFd);
-          } catch {
-            // Ignore.
+    // Default spawner launches a headless server detached in the target
+    // directory, with no console window and output redirected to a log file.
+    this.spawnBackend = options.spawnBackend ?? ((port, directory) => this.defaultSpawn(port, directory));
+  }
+
+  /** Start a headless opencode server (v1 `serve`, or v2 `opencode2 serve`) for a directory. */
+  private defaultSpawn(port: number, directory: string): SpawnedBackend {
+    // Redirect server output to a log file.
+    const logDir = path.join(this.config.stateDir, "logs");
+    let logFd: number | undefined;
+    try {
+      fs.mkdirSync(logDir, { recursive: true });
+      logFd = fs.openSync(path.join(logDir, `${this.kind === "v2" ? "opencode2" : "opencode"}-${port}.log`), "a");
+    } catch {
+      logFd = undefined;
+    }
+    const stdio: "ignore" | Array<"ignore" | number> = logFd !== undefined ? ["ignore", logFd, logFd] : "ignore";
+    // v2 servers use `opencode2 serve --port N` with an OAT-chosen Basic-auth password.
+    const env =
+      this.kind === "v2" ? { ...process.env, OPENCODE_SERVER_PASSWORD: this.config.v2Password } : process.env;
+    const { command, args } =
+      this.kind === "v2"
+        ? {
+            command: resolveOpencode2Executable(this.config.opencode2Bin, this.config.stateDir).command,
+            args: expandTokens(this.config.opencode2Args, {
+              port: String(this.config.port),
+              host: this.config.host,
+              host_port: String(port),
+            }),
           }
-        }
-        child.unref();
-        const pid = child.pid ?? -1;
-        return { pid, kill: () => killProcess(pid) };
-      });
+        : { command: resolveOpencodeExecutable(this.config.opencodeBin).command, args: ["serve", "--port", String(port)] };
+    // No shell: a shell would flash a console window on Windows.
+    const child = spawn(command, args, { cwd: directory, detached: true, stdio, windowsHide: true, env });
+    // A failed spawn (missing binary) must not crash the daemon.
+    child.on("error", (error) => log.warn(`supervisor: failed to start opencode: ${error.message}`));
+    // The child holds the descriptor now; close our copy.
+    if (logFd !== undefined) {
+      try {
+        fs.closeSync(logFd);
+      } catch {
+        // Ignore.
+      }
+    }
+    child.unref();
+    const pid = child.pid ?? -1;
+    return { pid, kill: () => killProcess(pid) };
   }
 
   /** Start the periodic idle sweep. */
@@ -229,8 +258,9 @@ export class BackendSupervisor {
       log.warn(`supervisor: instance cap (${this.maxInstances}) reached; not starting one for ${directory}`);
       return null;
     }
-    // Preferred: a visible terminal the user can work in.
-    if (this.useTerminal) {
+    // Preferred: a visible terminal the user can work in. v2 uses hidden
+    // `opencode2 serve` backends (the user runs the TUI with `oat opencode2`).
+    if (this.useTerminal && this.kind !== "v2") {
       const prior = this.launched.get(normalized);
       if (prior) {
         // Adopt the launched instance's server if it is still running.
@@ -398,6 +428,8 @@ export class BackendSupervisor {
       healthy: true,
       lastSeen: this.now(),
       anchor,
+      kind: this.kind,
+      ...(this.kind === "v2" ? { password: this.config.v2Password } : {}),
     };
     this.registry.addManaged(backend);
     this.spawned.set(port, child);

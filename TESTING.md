@@ -11,14 +11,28 @@ npm run e2e:daemon  # daemon lifecycle + singleton + maintenance worker
 npm run e2e         # real opencode: two servers, discovery, routing, SSE
 ```
 
-CI runs `build`, `test` and `lint` on Linux (Node 20 & 22). The two `e2e` suites need a real
-`opencode` binary and are therefore local/manual.
+CI runs `build`, `test` and `lint` on Linux (Node 20 & 22) and on macOS (Node 22). Linux can also be
+exercised locally with Docker; macOS has no Docker image:
 
-What the automated tests cover: per-OS discovery parsers; health/path probing; routing precedence
-(affinity → directory → session dir → default); proxy behavior (auth/hop-by-hop stripping, query and
-directory passthrough, 503/502 semantics, WebSocket upgrades, anchor read-only); SSE merge and
+```bash
+docker run --rm -v "<repo>:/src:ro" -w /tmp node:22 bash -lc \
+  "cp -r /src /work && cd /work && rm -rf node_modules dist dist-test && npm ci >/dev/null && npm run typecheck && npm run build && npm test && npm run lint"
+```
+
+The helper installer is cross-platform; verify it in a container too:
+
+```bash
+docker run --rm -v "<repo>:/src:ro" node:22 bash -lc \
+  "node /src/scripts/opencode2.mjs install --prefix /opt/oc2 --bin-dir /usr/local/bin && opencode2 --version && node /src/scripts/opencode2.mjs uninstall --prefix /opt/oc2 --bin-dir /usr/local/bin"
+```
+
+The two `e2e` suites need a real `opencode` binary and are therefore local/manual.
+
+What the automated tests cover: per-OS discovery parsers; health/path probing (**v1 and v2**); routing
+precedence (affinity → directory → session dir → default); proxy behavior (auth/hop-by-hop stripping,
+query and directory passthrough, 503/502 semantics, WebSocket upgrades, anchor read-only); SSE merge and
 `server.connected` collapse; state file + singleton handoff; supervisor caps and lazy-launch; config
-and arg templates.
+and arg templates; **v1<->v2 translation** (path mapping, prompt body, response unwrap, reserve).
 
 ## 2. Manual plan — Windows (primary)
 
@@ -65,10 +79,11 @@ Linux parser probe (Docker): `docker run --rm -v "$PWD/research:/research:ro" py
 ## 4. Known gaps
 
 - Plain `opencode` TUI exposes no port (not routable) — use `oat opencode`.
-- opencode v2 detection and a standalone launcher shim are not implemented.
+- opencode v2: translation covers only the endpoints the bridge uses; v2 SSE events are passed through
+  unshaped; a v2 server without a known password is not discoverable.
 - PTY/WebSocket proxying is handshake-tested only.
 - Distribution is source + `npm link`; no published package/binary.
-- Real-opencode end-to-end tests are local/manual.
+- Real-opencode end-to-end tests are local/manual (no v2 e2e yet).
 
 ## 5. Troubleshooting
 

@@ -59,7 +59,7 @@ The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall c
 binary (npm blocks install scripts by default on this machine). Override locations with
 `npm run opencode2:install -- --prefix <dir> --bin-dir <dir>`.
 
-> opencode v2 routing/launcher support in OAT is still in progress on this branch.
+> See "opencode v2 support" below for running v2 with OAT.
 
 ## Start
 
@@ -87,6 +87,24 @@ oat sesori-bridge  # == sesori-bridge --opencode-no-auto-start --opencode-port <
 
 Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the same port.
 
+## opencode v2 support
+
+OAT can coexist with opencode v1 and v2 and detect each backend automatically (v1 answers
+`/global/health`; v2 answers `/api/info` behind HTTP Basic auth).
+
+- **Discovery** probes `/global/health` (v1) then `/api/info` with the known password (v2), and tags each
+  backend with its generation.
+- **Manage v2 backends** with `OAT_BACKEND_VERSION=v2`: OAT starts `opencode2 serve --port <n>` per
+  project, injecting an OAT-chosen `OPENCODE_SERVER_PASSWORD`, and adds `Authorization: Basic` upstream.
+- **`oat opencode2 [args]`** runs the v2 TUI in the current terminal as a private server
+  (`--standalone`), with that password exported so OAT can discover and route to it. `oat opencode`
+  remains for v1.
+- **Translation** (`OAT_TRANSLATE_V2`, on by default): the Sesori bridge speaks v1, so OAT maps the v1
+  requests it makes onto v2's `/api/*` surface and unwraps v2 responses back to v1 shapes. This is a
+  stopgap — set `OAT_TRANSLATE_V2=0` once the bridge speaks v2 natively.
+
+The v2 path is newer and less battle-tested than v1; see Known limitations.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -102,6 +120,11 @@ Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the sam
 | `OAT_BRIDGE_BIN` | `sesori-bridge` | Bridge executable used by `oat sesori-bridge` |
 | `OAT_BRIDGE_ARGS` | `--opencode-no-auto-start --opencode-port {port}` | Args injected before your bridge args (`{port}`, `{host}`) |
 | `OAT_OPENCODE_ARGS` | `--port {host_port} --hostname {host}` | Args injected by `oat opencode` when no network flag is given |
+| `OAT_BACKEND_VERSION` | `v1` | Generation OAT starts for projects (`v2` uses `opencode2 serve`) |
+| `OAT_OPENCODE2_BIN` | `opencode2` | opencode v2 executable (isolated install or PATH) |
+| `OAT_OPENCODE2_ARGS` | `serve --port {host_port} --hostname {host}` | Args for a managed v2 server |
+| `OAT_V2_PASSWORD` | generated per daemon | Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 servers |
+| `OAT_TRANSLATE_V2` | `1` | Translate v1<->v2 for the bridge (`0` disables) |
 | `OAT_MAX_INSTANCES` | `32` | Safety cap on concurrently running OAT-started instances |
 | `OAT_SPAWNS_PER_MINUTE` | `6` | Burst guard: max new instances started per rolling minute |
 | `OAT_STATE_DIR` | per-OS | Where state/logs live |
@@ -119,6 +142,7 @@ oat list                  list discovered opencode backends
 oat reload                re-scan for opencode backends
 oat stop                  stop the daemon
 oat opencode [args]       run opencode in this terminal (args after 'opencode' go to opencode)
+oat opencode2 [args]      run opencode v2 in this terminal as a private server (args pass through)
 oat sesori-bridge [args]  run the bridge here, pointed at OAT (args pass through)
 oat serve                 run the daemon in the foreground (internal)
 oat version               print version
@@ -144,18 +168,33 @@ oat opencode -s ses_...      # any opencode args pass through
 Runs the bridge in the current terminal, pointed at OAT. The injected flags are a template
 (`OAT_BRIDGE_ARGS`); `oat --port 5000 sesori-bridge` moves both off a busy 4096.
 
+### `oat opencode2`
+
+Runs opencode **v2** in the current terminal as a private server (`--standalone`) so it stays
+per-project, exporting `OPENCODE_SERVER_PASSWORD` so OAT can discover and route to it. Arguments pass
+through. Use `oat opencode` (not `opencode2`) for a v1 TUI.
+
+```bash
+cd <project>
+oat opencode2                 # v2 TUI, private server, this folder
+oat opencode2 --server http://127.0.0.1:4096   # or attach to a specific server
+```
+
 ## Known limitations
 
 - A plain `opencode` TUI (started without `--port`/`--hostname`) exposes **no port** and is not
   routable. Use `oat opencode` (injects a port), `opencode serve`, or `opencode --port N`.
-- **opencode v2 detection** (single unified server) and a **standalone launcher shim** are not
-  implemented.
+- **opencode v2 support is newer and less tested than v1.** v2 backends must be reachable with a known
+  password (`OAT_V2_PASSWORD`); user-started v2 servers without it are not discoverable. The v1<->v2
+  **translation** covers the endpoints the bridge uses and is intentionally partial (see
+  `OAT_TRANSLATE_V2`); v2 SSE events are passed through without per-type reshaping.
+- A **standalone launcher shim** for opencode is not implemented.
 - **PTY/WebSocket** proxying is implemented but only handshake-tested; no live PTY test yet.
 - Distribution is **source + `npm link`** only; no published package or single binary.
 - The daemon's port is **unauthenticated** and bound to loopback by default.
-- Backends secured with `OPENCODE_SERVER_PASSWORD` are not supported yet.
 - OAT assumes a **single daemon**; multiple daemons are not coordinated.
-- Real-opencode end-to-end tests are local/manual (they need opencode installed).
+- Real-opencode end-to-end tests are local/manual (they need opencode installed). Cross-OS checks run on
+  Windows + Linux (Docker) locally and include a macOS CI job (no macOS Docker image exists).
 
 ## Run at login (optional)
 
