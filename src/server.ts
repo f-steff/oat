@@ -301,6 +301,7 @@ async function handleTranslatedProxy(
   res: http.ServerResponse,
   url: URL,
   backend: Backend,
+  attribute: boolean,
 ): Promise<void> {
   const directory = directoryFor(req, url);
   let body: unknown;
@@ -344,7 +345,10 @@ async function handleTranslatedProxy(
           }
         }
         const outHeaders = { ...upstreamRes.headers };
+        // We set an exact length, so the upstream's chunked framing must go.
+        delete outHeaders["transfer-encoding"];
         outHeaders["content-length"] = String(payload.length);
+        if (attribute) outHeaders["x-oat-backend"] = String(backend.port);
         res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
         res.end(payload);
       });
@@ -433,7 +437,7 @@ async function handleProxy(
 
   // v2 backends speak `/api/*` + Basic auth; translate the v1 surface when enabled.
   if (backend.kind === "v2" && deps.config.translateV2) {
-    await handleTranslatedProxy(req, res, url, backend);
+    await handleTranslatedProxy(req, res, url, backend, deps.config.debugAttribution);
     return;
   }
 

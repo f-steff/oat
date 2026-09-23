@@ -199,6 +199,7 @@ export function translateV2Response(v1Path: string, body: unknown): unknown {
   }
   // Session lists and single sessions: lift `location.directory` to `directory`.
   if (v1Path === "/session" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Session);
+  if (v1Path === "/session" && asRecord(unwrapped)) return translateV2Session(unwrapped);
   if (/^\/session\/[^/]+$/.test(v1Path) && asRecord(unwrapped)) return translateV2Session(unwrapped);
   // Message lists: reshape to `{ info, parts }[]`, dropping the `idle` marker.
   if (/^\/session\/[^/]+\/message$/.test(v1Path) && Array.isArray(unwrapped)) {

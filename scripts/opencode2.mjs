@@ -26,7 +26,7 @@ function stateDir() {
   if (platform() === "darwin") {
     return join(homedir(), "Library", "Application Support", "oat");
   }
-  return join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "oat");
+  return join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "oat");
 }
 
 function parseArgs(argv) {
