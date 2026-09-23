@@ -6,7 +6,7 @@ import { log } from "./logger.js";
 import type { Registry } from "./registry.js";
 import { pickBackend } from "./router.js";
 import { basicAuth } from "./discovery/discover.js";
-import { isReserve, synthesizeReservedMessage, translateRequest, unwrapV2Response } from "./translate.js";
+import { isReserve, synthesizeReservedMessage, translateRequest, translateV2Response } from "./translate.js";
 import { formatSseEvent, SseMerger, type SseEvent } from "./sse.js";
 import type { Backend, OatConfig } from "./types.js";
 
@@ -308,7 +308,7 @@ async function handleTranslatedProxy(
         let payload = raw;
         if (contentType.includes("application/json") && raw.length > 0) {
           try {
-            payload = Buffer.from(JSON.stringify(unwrapV2Response(JSON.parse(raw.toString("utf8")))));
+            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")))));
           } catch {
             // Not JSON after all; return it unchanged.
           }

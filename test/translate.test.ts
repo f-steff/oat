@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -7,8 +9,14 @@ import {
   synthesizeReservedMessage,
   translatePromptBody,
   translateRequest,
+  translateV2Response,
   unwrapV2Response,
 } from "../src/translate.js";
+
+/** Read a captured opencode v2 fixture (see research/capture-v2.sh). */
+function fixture(name: string): unknown {
+  return JSON.parse(fs.readFileSync(path.join("test", "fixtures", "v2", name), "utf8"));
+}
 
 test("mapV1PathToV2 maps the bridge's core routes", () => {
   assert.equal(mapV1PathToV2("/session"), "/api/session");
@@ -92,4 +100,40 @@ test("translateRequest passes non-prompt bodies through and keeps existing query
   assert.equal(req.method, "GET");
   assert.equal(req.path, "/api/session?limit=5");
   assert.equal(req.body, undefined);
+});
+
+test("translateV2Response maps v2 session reads to v1 shapes (fixtures)", () => {
+  const list = translateV2Response("/session", fixture("session-list.json")) as Array<Record<string, unknown>>;
+  assert.equal(list.length, 1);
+  assert.equal(list[0]?.directory, "/");
+  assert.equal(list[0]?.location, undefined);
+  assert.equal(list[0]?.title, "fixture");
+
+  const single = translateV2Response("/session/ses_x", fixture("session-create.json")) as Record<string, unknown>;
+  assert.equal(single.directory, "/");
+  assert.match(String(single.id), /^ses_/);
+});
+
+test("translateV2Response maps v2 messages to v1 {info,parts} and drops idle (fixtures)", () => {
+  const messages = translateV2Response(
+    "/session/ses_x/message",
+    fixture("session-messages.json"),
+  ) as Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }>;
+  assert.equal(messages.length, 2); // user + assistant; idle marker dropped
+  const [assistant, user] = messages;
+  assert.equal(user?.info.role, "user");
+  assert.equal(user?.parts[0]?.text, "Reply with exactly: OK");
+  assert.equal(assistant?.info.role, "assistant");
+  const texts = assistant?.parts.filter((p) => p.type === "text").map((p) => p.text);
+  assert.deepEqual(texts, ["OK"]);
+});
+
+test("translateV2Response maps v2 providers to v1 /provider and /config/providers (fixtures)", () => {
+  const provider = translateV2Response("/provider", fixture("provider.json")) as Record<string, unknown>;
+  assert.equal(Array.isArray(provider.all), true);
+  assert.deepEqual(provider.connected, ["opencode"]);
+
+  const config = translateV2Response("/config/providers", fixture("provider.json")) as Record<string, unknown>;
+  assert.equal(Array.isArray(config.providers), true);
+  assert.deepEqual(config.default, {});
 });

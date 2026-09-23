@@ -110,6 +110,104 @@ export function unwrapV2Response(body: unknown): unknown {
   return body;
 }
 
+const SESSION_ID_PATH = /^\/session\/([^/]+)(?:\/|$)/;
+
+/** Extract a session id from a v1 path (ignoring `/session/status`). */
+function sessionIdOf(pathname: string): string | undefined {
+  const match = SESSION_ID_PATH.exec(pathname);
+  const id = match?.[1];
+  return id && id !== "status" ? id : undefined;
+}
+
+/**
+ * v2 `Session.Info` -> v1 `Session`: the directory lives under `location` in v2
+ * but is a top-level `directory` in v1.
+ */
+export function translateV2Session(value: unknown): unknown {
+  const session = asRecord(value);
+  if (!session) return value;
+  const location = asRecord(session.location);
+  const out: Record<string, unknown> = { ...session };
+  delete out.location;
+  if (typeof location?.directory === "string") out.directory = location.directory;
+  return out;
+}
+
+/**
+ * v2 message (`user` / `assistant` with a `content[]` array) -> v1 `{ info, parts }`.
+ * The `idle` marker is not a real message and maps to `null`.
+ */
+export function translateV2Message(value: unknown, sessionID?: string): unknown {
+  const message = asRecord(value);
+  if (!message) return value;
+  const id = String(message.id ?? "");
+  const time = asRecord(message.time) ?? {};
+  const type = message.type;
+  if (type === "idle") return null;
+  if (type === "user") {
+    return {
+      info: { id, sessionID, role: "user", time: { created: time.created } },
+      parts: [{ id: `${id}_text`, messageID: id, sessionID, type: "text", text: message.text ?? "" }],
+    };
+  }
+  if (type === "assistant") {
+    const model = asRecord(message.model);
+    const content = Array.isArray(message.content) ? message.content : [];
+    const parts = content.map((entry, index) => {
+      const part = asRecord(entry) ?? {};
+      return {
+        id: `${id}_${index}`,
+        messageID: id,
+        sessionID,
+        type: part.type === "reasoning" ? "reasoning" : "text",
+        text: part.text ?? "",
+      };
+    });
+    return {
+      info: {
+        id,
+        sessionID,
+        role: "assistant",
+        time: { created: time.created, completed: time.completed },
+        modelID: model?.id,
+        providerID: model?.providerID,
+        cost: message.cost,
+        tokens: message.tokens,
+        finish: message.finish,
+      },
+      parts,
+    };
+  }
+  return value;
+}
+
+/**
+ * Translate an unwrapped v2 response body into the v1 shape expected for
+ * `v1Path`. Unknown paths fall back to the plain `{ data }` unwrap.
+ */
+export function translateV2Response(v1Path: string, body: unknown): unknown {
+  const unwrapped = unwrapV2Response(body);
+  // v2 `/api/provider` -> v1 `/provider` ({all, default, connected}).
+  if (v1Path === "/provider" || v1Path === "/config/providers") {
+    const list = Array.isArray(unwrapped) ? unwrapped : [];
+    if (v1Path === "/config/providers") return { providers: list, default: {} };
+    const connected = list
+      .map((entry) => asRecord(entry))
+      .filter((entry) => entry?.activation === "enabled")
+      .map((entry) => entry?.id);
+    return { all: list, default: {}, connected };
+  }
+  // Session lists and single sessions: lift `location.directory` to `directory`.
+  if (v1Path === "/session" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Session);
+  if (/^\/session\/[^/]+$/.test(v1Path) && asRecord(unwrapped)) return translateV2Session(unwrapped);
+  // Message lists: reshape to `{ info, parts }[]`, dropping the `idle` marker.
+  if (/^\/session\/[^/]+\/message$/.test(v1Path) && Array.isArray(unwrapped)) {
+    const sessionID = sessionIdOf(v1Path);
+    return unwrapped.map((message) => translateV2Message(message, sessionID)).filter((message) => message !== null);
+  }
+  return unwrapped;
+}
+
 /**
  * Build a v1-shaped "reserved user message" response locally, so a v2 backend
  * never has to admit a duplicate user message for the bridge's reserve step.
