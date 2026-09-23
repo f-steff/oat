@@ -78,4 +78,12 @@ export interface OatConfig {
   bridgeArgs: string;
   /** Args injected for `oat opencode` when no network flag is given (`{host_port}`, `{host}`). */
   opencodeArgs: string;
+  /** Path/name of the opencode v2 executable used for `oat opencode2` and v2 backends. */
+  opencode2Bin: string;
+  /** Args template for a headless v2 server (`serve --port {host_port} --hostname {host}`). */
+  opencode2Args: string;
+  /** Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 backends (HTTP Basic). */
+  v2Password: string;
+  /** When true, translate v1<->v2 for the bridge; `OAT_TRANSLATE_V2=0` disables it. */
+  translateV2: boolean;
 }

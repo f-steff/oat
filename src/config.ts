@@ -50,5 +50,12 @@ export function defaultConfig(overrides: Partial<OatConfig> = {}): OatConfig {
     bridgeBin: overrides.bridgeBin ?? process.env.OAT_BRIDGE_BIN ?? "sesori-bridge",
     bridgeArgs: overrides.bridgeArgs ?? process.env.OAT_BRIDGE_ARGS ?? "--opencode-no-auto-start --opencode-port {port}",
     opencodeArgs: overrides.opencodeArgs ?? process.env.OAT_OPENCODE_ARGS ?? "--port {host_port} --hostname {host}",
+    // opencode v2 is a separate binary (`opencode2`); its server uses HTTP Basic auth.
+    opencode2Bin: overrides.opencode2Bin ?? process.env.OAT_OPENCODE2_BIN ?? "opencode2",
+    opencode2Args:
+      overrides.opencode2Args ?? process.env.OAT_OPENCODE2_ARGS ?? "serve --port {host_port} --hostname {host}",
+    // Stable per-daemon password for v2 backends (propagated to the daemon via env).
+    v2Password: overrides.v2Password ?? process.env.OAT_V2_PASSWORD ?? newToken(),
+    translateV2: overrides.translateV2 ?? process.env.OAT_TRANSLATE_V2 !== "0",
   };
 }

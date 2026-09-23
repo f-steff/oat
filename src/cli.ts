@@ -9,7 +9,7 @@ import { defaultConfig } from "./config.js";
 import { callControl, fetchIdentity } from "./control.js";
 import { discoverBackends, makeHttpProbe } from "./discovery/discover.js";
 import { listListeners } from "./discovery/ports.js";
-import { expandTokens, resolveExecutable, resolveOpencodeExecutable } from "./launcher.js";
+import { expandTokens, resolveExecutable, resolveOpencode2Executable, resolveOpencodeExecutable } from "./launcher.js";
 import { log, logFilePath, setLogFile } from "./logger.js";
 import { Registry } from "./registry.js";
 import { createMuxServer, OAT_VERSION, type ControlHandlers } from "./server.js";
@@ -75,6 +75,8 @@ async function ensureDaemon(config: OatConfig): Promise<OatState> {
       OAT_PORT: String(config.port),
       // Keep the child's log file identical to the parent's choice.
       OAT_LOG_FILE: config.logFile,
+      // Keep the v2 backend password stable across CLI and daemon.
+      OAT_V2_PASSWORD: config.v2Password,
     },
   });
   child.unref();
@@ -289,6 +291,37 @@ async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<n
   });
 }
 
+/**
+ * Run `oat opencode2 [args...]`: start opencode v2 in the CURRENT terminal with
+ * a PRIVATE server (`--standalone`) so it stays per-project, and set a known
+ * password so OAT can discover and authenticate to it. Arguments pass through.
+ */
+async function runOpencode2(config: OatConfig, args: string[]): Promise<number> {
+  // Ensure the daemon is up so it can discover and route this instance.
+  await ensureDaemon(config);
+  const directory = process.cwd();
+  const { command, shell } = resolveOpencode2Executable(config.opencode2Bin, config.stateDir);
+  // Default to a private server (don't hijack v2's shared background service).
+  const targeted = args.some((arg) => arg === "--standalone" || arg === "--server" || arg.startsWith("--server="));
+  const finalArgs = targeted ? args : ["--standalone", ...args];
+  console.log(`oat: starting opencode v2 in this terminal (${directory})`);
+  // Inherit stdio so the TUI runs here; expose the known server password to it.
+  const child = spawn(command, finalArgs, {
+    cwd: directory,
+    stdio: "inherit",
+    shell,
+    windowsHide: false,
+    env: { ...process.env, OPENCODE_SERVER_PASSWORD: config.v2Password },
+  });
+  return await new Promise<number>((resolve) => {
+    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    child.on("error", (error) => {
+      console.error(`oat: failed to start opencode v2: ${error.message}`);
+      resolve(1);
+    });
+  });
+}
+
 /** Find a free loopback TCP port by binding to port 0. */
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -482,6 +515,7 @@ const USAGE = ((): string => {
     ["oat reload", "re-scan for opencode backends"],
     ["oat stop", "stop the daemon"],
     ["oat opencode [args]", "run opencode in this terminal (args after 'opencode' go to opencode)"],
+    ["oat opencode2 [args]", "run opencode v2 in this terminal as a private server (args pass through)"],
     ["oat sesori-bridge [args]", "run the bridge here, pointed at OAT (args pass through)"],
     ["oat serve", "run the daemon in the foreground (internal)"],
     ["oat version", "print version"],
@@ -503,13 +537,18 @@ const USAGE = ((): string => {
 /** Parse the command line and dispatch to the right operation. */
 async function main(): Promise<number> {
   const raw = process.argv.slice(2);
-  // `oat [oat-opts] <opencode|sesori-bridge> [args...]` splits at the tool token.
-  const bridgeIndex = raw.indexOf("sesori-bridge");
-  const opencodeIndex = raw.indexOf("opencode");
-  const isBridge = bridgeIndex !== -1;
-  const isOpencode = !isBridge && opencodeIndex !== -1;
-  const tool = isBridge ? "sesori-bridge" : isOpencode ? "opencode" : null;
-  const splitIndex = isBridge ? bridgeIndex : opencodeIndex;
+  // `oat [oat-opts] <tool> [args...]` splits at the first tool token; the rest
+  // passes through to that tool. First match in the line wins.
+  const TOOLS = ["sesori-bridge", "opencode2", "opencode"];
+  let tool: string | null = null;
+  let splitIndex = -1;
+  for (const candidate of TOOLS) {
+    const index = raw.indexOf(candidate);
+    if (index !== -1 && (splitIndex === -1 || index < splitIndex)) {
+      tool = candidate;
+      splitIndex = index;
+    }
+  }
   const oatArgs = tool ? raw.slice(0, splitIndex) : raw;
   const toolArgs = tool ? raw.slice(splitIndex + 1) : [];
   // The command is the tool name, a recognized flag-only command, or the first
@@ -543,6 +582,9 @@ async function main(): Promise<number> {
     // Runner: run opencode in this terminal, discoverable by OAT.
     case "opencode":
       return runOpencode(config, toolArgs);
+    // Runner: run opencode v2 in this terminal as a private server.
+    case "opencode2":
+      return runOpencode2(config, toolArgs);
     // Runner: run sesori-bridge in this terminal, pointed at OAT.
     case "sesori-bridge":
       return runSesoriBridge(config, toolArgs);

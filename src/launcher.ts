@@ -2,6 +2,8 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { defaultStateDir } from "./config.js";
+
 /** A command to open a terminal window running opencode in a directory. */
 export interface LaunchSpec {
   /** Executable to run (e.g. `wt.exe`, `gnome-terminal`). */
@@ -61,6 +63,40 @@ export function resolveOpencodeExecutable(bin: string): { command: string; shell
     // Ignore and fall through to the shim.
   }
   // Last resort: the bare name (no shell, so no console window can flash).
+  return { command: bin, shell: false };
+}
+
+/** Candidate binary paths for the isolated opencode v2 install (`npm run opencode2:install`). */
+function opencode2Candidates(stateDir: string): string[] {
+  const binDirs = [
+    path.join(stateDir, "opencode2", "node_modules", "@opencode", "cli", "bin"),
+    path.join(stateDir, "opencode2", "lib", "node_modules", "@opencode", "cli", "bin"),
+  ];
+  return binDirs.flatMap((dir) => [path.join(dir, "opencode.exe"), path.join(dir, "opencode")]);
+}
+
+/**
+ * Resolve the opencode v2 executable, preferring the isolated install created by
+ * `npm run opencode2:install`, then a `opencode2`/`opencode` real binary on PATH.
+ */
+export function resolveOpencode2Executable(bin: string, stateDir = defaultStateDir()): { command: string; shell: boolean } {
+  // An explicit path is used verbatim.
+  if (bin.includes("/") || bin.includes("\\")) return { command: bin, shell: false };
+  for (const candidate of opencode2Candidates(stateDir)) {
+    if (fs.existsSync(candidate)) return { command: candidate, shell: false };
+  }
+  if (process.platform !== "win32") return { command: bin, shell: false };
+  // Prefer a real .exe on PATH (the `opencode2` shim may be a .cmd).
+  try {
+    const found = execFileSync("where", [bin], { encoding: "utf8", timeout: 5_000 })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const exe = found.find((line) => line.toLowerCase().endsWith(".exe"));
+    if (exe) return { command: exe, shell: false };
+  } catch {
+    // Fall through to the shim/bare name.
+  }
   return { command: bin, shell: false };
 }
 
