@@ -22,7 +22,9 @@ routes each request to the right instance.
 ## Requirements
 
 - **Node.js ≥ 20** and npm
-- **opencode** on `PATH` (or set `OPENCODE_BIN` to its full path)
+- **opencode** on `PATH` — v1 (`opencode`) and/or v2 (`opencode2`); see
+  [Installing opencode v1 and v2 side by side](#installing-opencode-v1-and-v2-side-by-side) (or set
+  `OPENCODE_BIN` / `OAT_OPENCODE2_BIN` to a full path)
 - **sesori-bridge** for the phone connection
 - **git** to obtain the source
 
@@ -42,25 +44,44 @@ oat version        # expect: 0.2.0
 Prefer not to install a global command? Run from the repo after `npm run build`:
 `bin/oat <command>` (POSIX) or `bin\oat <command>` (Windows), or `node dist/cli.js <command>`.
 
-### Running opencode v1 and v2 side by side
+### Installing opencode v1 and v2 side by side
 
-opencode v2 (`@opencode/cli`) also ships an `opencode` binary, so installing it globally would shadow
-v1. The helper installs v2 into an isolated prefix and exposes only an `opencode2` command, leaving v1's
-`opencode` untouched:
+opencode v1 (`opencode-ai`) and v2 (`@opencode/cli`) **both ship a binary called `opencode`**, so a global
+v2 install would overwrite v1's command. Install v1 normally, then use OAT's helper to add v2 as a
+separate `opencode2` command: v2 goes into an isolated prefix, so the two never collide.
 
 ```bash
-npm run opencode2:install    # installs @opencode/cli into <state>/oat/opencode2; creates `opencode2`
-opencode --version           # v1 (unchanged)
-opencode2 --version          # v2
-npm run opencode2:status     # show the isolated prefix and wrapper paths
-npm run opencode2:uninstall  # remove the `opencode2` wrapper and the isolated install
+# 1. v1 — provides the `opencode` command
+npm install -g opencode-ai
+
+# 2. v2 — isolated install; provides the `opencode2` command (v1's `opencode` stays intact)
+npm run opencode2:install
+
+# 3. verify both coexist
+opencode  --version      # 1.x
+opencode2 --version      # 2.x
 ```
 
-The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall can select the native
-binary (npm blocks install scripts by default on this machine). Override locations with
-`npm run opencode2:install -- --prefix <dir> --bin-dir <dir>`.
+Run either from a normal terminal — `opencode` is v1, `opencode2` is v2 — or through OAT: `oat opencode`
+(v1) / `oat opencode2` (v2) / `OAT_BACKEND_VERSION=v2` (OAT-managed v2 backends).
 
-> See "opencode v2 support" below for running v2 with OAT.
+```bash
+npm run opencode2:status      # show the isolated prefix and wrapper paths
+npm run opencode2:uninstall   # remove the `opencode2` wrapper and the isolated v2 install (v1 untouched)
+```
+
+How it works and platform notes:
+
+- The isolated v2 prefix defaults to `<state-dir>/opencode2`:
+  Windows `%LOCALAPPDATA%\oat\opencode2`, macOS `~/Library/Application Support/oat/opencode2`,
+  Linux `${XDG_STATE_HOME:-~/.local/state}/oat/opencode2`.
+- The `opencode2` wrapper is written to your npm global bin (`npm prefix -g`), which is already on `PATH`.
+  On Linux/macOS that may need `sudo`; alternatively write it to a dir already on `PATH`, e.g.
+  `npm run opencode2:install -- --bin-dir ~/.local/bin`.
+- The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall can download/select the
+  native binary (npm blocks install scripts by default). Change locations with `--prefix`/`--bin-dir`,
+  and pin a release with `npm run opencode2:install -- --version 2.0.15`.
+- Uninstall leaves v1 fully intact; re-run `npm run opencode2:install` any time to restore v2.
 
 ## Start
 
