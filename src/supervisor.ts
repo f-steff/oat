@@ -41,6 +41,8 @@ export interface SupervisorOptions {
   findFreePort?: () => Promise<number>;
   /** Clock injection (tests). */
   now?: () => number;
+  /** Override process termination (tests); defaults to a pid-only kill. */
+  kill?: (pid: number) => void;
   /** How often the idle sweep runs, in milliseconds. */
   idleSweepMs?: number;
   /** How long to wait for a freshly started backend to become healthy. */
@@ -109,6 +111,8 @@ export class BackendSupervisor {
   private readonly probe: (port: number) => Promise<boolean>;
   private readonly findPort: () => Promise<number>;
   private readonly now: () => number;
+  /** Terminates a process by pid (injectable for tests). */
+  private readonly killPid: (pid: number) => void;
   private readonly idleSweepMs: number;
   private readonly healthTimeoutMs: number;
   /** Whether to open a visible terminal (true) or a hidden server (false). */
@@ -147,6 +151,7 @@ export class BackendSupervisor {
     this.kind = this.config.backendVersion;
     this.registry = options.registry;
     this.now = options.now ?? Date.now;
+    this.killPid = options.kill ?? killProcess;
     this.idleSweepMs = options.idleSweepMs ?? 60_000;
     this.healthTimeoutMs = options.healthTimeoutMs ?? 30_000;
     this.probe =
@@ -338,6 +343,15 @@ export class BackendSupervisor {
     }
     // Run the anchor from an OAT-owned directory so it cannot collide with a project.
     const directory = path.join(this.config.stateDir, "anchor");
+    const target = normalizeDir(directory);
+    // Reap any maintenance worker already running in our directory (e.g. left by
+    // a previous daemon) so exactly one anchor exists and this daemon owns it.
+    for (const stale of this.registry.list()) {
+      if (stale.anchor && stale.pid && normalizeDir(stale.primaryDirectory ?? "") === target) {
+        log.info(`supervisor: reaping stale anchor on :${stale.port}`);
+        this.killPid(stale.pid);
+      }
+    }
     try {
       await fs.promises.mkdir(directory, { recursive: true });
     } catch {

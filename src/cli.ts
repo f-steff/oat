@@ -404,7 +404,12 @@ async function runDaemon(config: OatConfig): Promise<void> {
       // Never treat OAT's own port, or a managed (lazily started) backend, as a
       // fresh discovery candidate.
       const skipPorts = new Set<number>([config.port, ...registry.managedPorts()]);
-      const backends = await discoverBackends(listeners, { probe, skipPorts, v2Password: config.v2Password });
+      const backends = await discoverBackends(listeners, {
+        probe,
+        skipPorts,
+        v2Password: config.v2Password,
+        anchorDir: path.join(config.stateDir, "anchor"),
+      });
       // Also attach to a user-started v2 shared service (its password lives on disk).
       const service = await readV2Service();
       if (service) {

@@ -1,3 +1,4 @@
+import { normalizeDir } from "../router.js";
 import type { Backend, BackendKind, RawListener } from "../types.js";
 
 /** Result of probing a server (v1 `/global/health` or v2 `/api/info`). */
@@ -92,6 +93,12 @@ export interface DiscoverOptions {
   now?: () => number;
   /** Password used to authenticate against v2 backends (attached to detected v2 servers). */
   v2Password?: string;
+  /**
+   * This daemon's own maintenance-worker directory. Servers found there are
+   * kept (marked `anchor: true`) so they can be adopted instead of duplicated;
+   * every other anchor directory is hidden.
+   */
+  anchorDir?: string | null;
 }
 
 /** True for OAT's internal anchor/maintenance directories, which are not projects. */
@@ -124,8 +131,10 @@ export async function discoverBackends(
       const kind = health.kind ?? "v1";
       // Capture the primary directory and the owning pid (if discovery found it).
       const primaryDirectory = await probe.path(baseUrl, kind);
-      // OAT's own anchor/maintenance servers are never user projects.
-      if (isOatAnchorDir(primaryDirectory)) return null;
+      // Maintenance workers are hidden, except our own (kept so it can be adopted).
+      const anchorDir = options.anchorDir ?? null;
+      const ours = anchorDir != null && primaryDirectory != null && normalizeDir(primaryDirectory) === normalizeDir(anchorDir);
+      if (isOatAnchorDir(primaryDirectory) && !ours) return null;
       const listener = listeners.find((entry) => entry.port === port);
       return {
         port,
@@ -136,6 +145,7 @@ export async function discoverBackends(
         healthy: true,
         lastSeen: now(),
         kind,
+        ...(ours ? { anchor: true } : {}),
         // A detected v2 backend is only reachable because we know the password.
         ...(kind === "v2" && options.v2Password ? { password: options.v2Password } : {}),
       };

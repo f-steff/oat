@@ -110,3 +110,26 @@ test("isOatAnchorDir recognizes OAT anchor directories", () => {
   assert.equal(isOatAnchorDir("C:\\Projects\\myapp\\anchor"), false);
   assert.equal(isOatAnchorDir(null), false);
 });
+
+// Our own anchor is kept (so it can be adopted); foreign/temp anchors are hidden.
+test("discoverBackends keeps our anchor and hides foreign ones", async (t) => {
+  const ours = await startServer({ healthy: true, directory: "/srv/oat/anchor" });
+  t.after(() => close(ours.server));
+  const foreign = await startServer({ healthy: true, directory: "/tmp/oat-daemon-x/anchor" });
+  t.after(() => close(foreign.server));
+
+  const listeners: RawListener[] = [
+    { port: ours.port, pid: 11, address: "127.0.0.1" },
+    { port: foreign.port, pid: 22, address: "127.0.0.1" },
+  ];
+
+  const found = await discoverBackends(listeners, { probe: makeHttpProbe(500), anchorDir: "/srv/oat/anchor" });
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.port, ours.port);
+  assert.equal(found[0]?.anchor, true);
+
+  // With no anchorDir, every anchor directory is hidden.
+  const none = await discoverBackends(listeners, { probe: makeHttpProbe(500) });
+  assert.equal(none.length, 0);
+});
+
