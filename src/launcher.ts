@@ -23,7 +23,7 @@ export function resolveExecutable(name: string, candidates: string[] = []): { co
     if (candidate && fs.existsSync(candidate)) return { command: candidate, shell: false };
   }
   try {
-    const found = execFileSync("where", [name], { encoding: "utf8", timeout: 5_000 })
+    const found = execFileSync("where", [name], { encoding: "utf8", timeout: 5_000, windowsHide: true })
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -53,7 +53,7 @@ export function resolveOpencodeExecutable(bin: string): { command: string; shell
   }
   // Resolve via PATH, accepting a real .exe when one is found.
   try {
-    const found = execFileSync("where", ["opencode"], { encoding: "utf8", timeout: 5_000 })
+    const found = execFileSync("where", ["opencode"], { encoding: "utf8", timeout: 5_000, windowsHide: true })
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -88,7 +88,7 @@ export function resolveOpencode2Executable(bin: string, stateDir = defaultStateD
   if (process.platform !== "win32") return { command: bin, shell: false };
   // Prefer a real .exe on PATH (the `opencode2` shim may be a .cmd).
   try {
-    const found = execFileSync("where", [bin], { encoding: "utf8", timeout: 5_000 })
+    const found = execFileSync("where", [bin], { encoding: "utf8", timeout: 5_000, windowsHide: true })
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -115,7 +115,7 @@ export function killProcess(pid: number): void {
     // Already gone.
   }
   try {
-    execFileSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore", timeout: 8_000 });
+    execFileSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore", timeout: 8_000, windowsHide: true });
   } catch {
     // taskkill is Windows-only or the process already exited.
   }

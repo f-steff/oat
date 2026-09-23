@@ -225,7 +225,7 @@ async function stopCommand(config: OatConfig, json: boolean): Promise<number> {
       // Already gone.
     }
     try {
-      execFileSync("taskkill", ["/PID", String(identity.pid), "/F"], { stdio: "ignore", timeout: 8_000 });
+      execFileSync("taskkill", ["/PID", String(identity.pid), "/F"], { stdio: "ignore", timeout: 8_000, windowsHide: true });
     } catch {
       // taskkill is Windows-only / already exited.
     }
