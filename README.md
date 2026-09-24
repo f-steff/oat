@@ -109,21 +109,39 @@ oat sesori-bridge  # == sesori-bridge --opencode-no-auto-start --opencode-port <
 
 Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the same port.
 
-## opencode v2 support
+## Running v1 and v2 with OAT in parallel
 
-OAT can coexist with opencode v1 and v2 and detect each backend automatically (v1 answers
-`/global/health`; v2 answers `/api/info` behind HTTP Basic auth).
+One OAT daemon can drive a **mix of v1 and v2 instances at the same time**. It detects each backend's
+generation (v1 answers `/global/health`; v2 answers `/api/info` behind HTTP Basic auth), tags it, and
+routes per project directory. Because the Sesori bridge speaks v1, OAT also translates v1↔v2 — so the
+phone can drive v2 instances with **no bridge change**.
+
+```bash
+oat start                     # one OAT daemon
+
+cd ~/proj-a && oat opencode   # v1 TUI (OAT injects a port so it is discoverable)
+cd ~/proj-b && oat opencode2  # v2 TUI as a private server (password exported for OAT)
+
+oat list                      # both appear, distinguished by VERSION (1.x vs 2.x)
+oat sesori-bridge             # the bridge reaches both through OAT
+```
+
+- Lazily-started backends (a phone action for a project with no instance) use the generation from
+  `OAT_BACKEND_VERSION` (`v1` by default; `v2` starts `opencode2 serve`). `oat opencode2` instances are
+  always v2.
+- `oat stop` stops the daemon and any hidden OAT-started servers; your own `opencode`/`opencode2` windows
+  are left alone.
+
+Internals:
 
 - **Discovery** probes `/global/health` (v1) then `/api/info` with the known password (v2), and tags each
   backend with its generation.
-- **Manage v2 backends** with `OAT_BACKEND_VERSION=v2`: OAT starts `opencode2 serve --port <n>` per
-  project, injecting an OAT-chosen `OPENCODE_SERVER_PASSWORD`, and adds `Authorization: Basic` upstream.
-- **`oat opencode2 [args]`** runs the v2 TUI in the current terminal as a private server
-  (`--standalone`), with that password exported so OAT can discover and route to it. `oat opencode`
-  remains for v1.
-- **Translation** (`OAT_TRANSLATE_V2`, on by default): the Sesori bridge speaks v1, so OAT maps the v1
-  requests it makes onto v2's `/api/*` surface and unwraps v2 responses back to v1 shapes. This is a
-  stopgap — set `OAT_TRANSLATE_V2=0` once the bridge speaks v2 natively.
+- **Managed v2** (`OAT_BACKEND_VERSION=v2`): OAT starts `opencode2 serve --port <n>` per project with an
+  OAT-chosen `OPENCODE_SERVER_PASSWORD`, and adds `Authorization: Basic` upstream.
+- **`oat opencode2 [args]`** runs the v2 TUI as a private server (`--standalone`) with that password
+  exported; `oat opencode` remains for v1.
+- **Translation** (`OAT_TRANSLATE_V2`, on by default) maps the bridge's v1 requests onto v2 `/api/*` and
+  translates v2 responses/events back to v1 shapes; set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
 
 The v2 path is newer and less battle-tested than v1; see Known limitations.
 
