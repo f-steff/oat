@@ -57,27 +57,31 @@ npm install -g opencode-ai
 # 2. v2 — isolated install; provides the `opencode2` command (v1's `opencode` stays intact)
 npm run opencode2:install
 
-# 3. verify both coexist
-opencode  --version      # 1.x
-opencode2 --version      # 2.x
+# 3. verify both coexist and see where each resolves
+npm run opencode2:status  # lists `opencode` (v1) and `opencode2` (v2) with versions/paths
+opencode  --version       # 1.x
+opencode2 --version       # 2.x
 ```
 
 Run either from a normal terminal — `opencode` is v1, `opencode2` is v2 — or through OAT: `oat opencode`
 (v1) / `oat opencode2` (v2) / `OAT_BACKEND_VERSION=v2` (OAT-managed v2 backends).
 
 ```bash
-npm run opencode2:status      # show the isolated prefix and wrapper paths
+npm run opencode2:status      # show both environments (and warn if v1 was overwritten)
 npm run opencode2:uninstall   # remove the `opencode2` wrapper and the isolated v2 install (v1 untouched)
 ```
 
 How it works and platform notes:
 
+- **v1 is never touched.** v2 is installed into an isolated prefix, and the helper **refuses** a `--prefix`
+  that maps onto your global bin (which is where npm would otherwise write an `opencode` shim and shadow
+  v1). `npm run opencode2:status` verifies both commands and warns if v1's `opencode` came back as 2.x.
 - The isolated v2 prefix defaults to `<state-dir>/opencode2`:
   Windows `%LOCALAPPDATA%\oat\opencode2`, macOS `~/Library/Application Support/oat/opencode2`,
   Linux `${XDG_STATE_HOME:-~/.local/state}/oat/opencode2`.
-- The `opencode2` wrapper is written to your npm global bin (`npm prefix -g`), which is already on `PATH`.
-  On Linux/macOS that may need `sudo`; alternatively write it to a dir already on `PATH`, e.g.
-  `npm run opencode2:install -- --bin-dir ~/.local/bin`.
+- The `opencode2` wrapper is written to your npm global bin (Windows `npm prefix -g`; on Linux/macOS its
+  `bin/`), which is already on `PATH`. On Linux/macOS that may need `sudo`; alternatively write it to a
+  dir already on `PATH`, e.g. `npm run opencode2:install -- --bin-dir ~/.local/bin`.
 - The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall can download/select the
   native binary (npm blocks install scripts by default). Change locations with `--prefix`/`--bin-dir`,
   and pin a release with `npm run opencode2:install -- --version 2.0.15`.
