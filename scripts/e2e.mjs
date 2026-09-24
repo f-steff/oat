@@ -162,12 +162,14 @@ async function main() {
   const dirs = [path.join(base, "a"), path.join(base, "b")];
   for (const dir of dirs) mkdirSync(dir, { recursive: true });
 
-  console.log("[1] starting two real opencode servers");
+  console.log("[1] starting two real opencode servers (sequentially, to avoid a first-run DB migration race)");
   console.log(`    using exe: ${opencodeExe()}`);
   const logs = [path.join(base, "a.log"), path.join(base, "b.log")];
   startOpencode(PORTS[0], dirs[0], logs[0]);
+  const healthyA = await waitHealth(PORTS[0]);
   startOpencode(PORTS[1], dirs[1], logs[1]);
-  const healthy = await Promise.all(PORTS.map((port) => waitHealth(port)));
+  const healthyB = await waitHealth(PORTS[1]);
+  const healthy = [healthyA, healthyB];
   check("both opencode servers healthy", healthy.every(Boolean), PORTS.map((p, i) => `${p}:${healthy[i]}`).join(" "));
   if (!healthy.every(Boolean)) {
     // Surface the server logs to explain why a startup failed.

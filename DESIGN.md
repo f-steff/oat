@@ -141,6 +141,8 @@ This layer is deliberately partial and toggleable: set `OAT_TRANSLATE_V2=0` once
   the user message is duplicated.
 - Long-lived child processes can hang supervising shells; OAT must run **detached**.
 - Killing a process **tree** (`taskkill /T`) can close terminal tabs; kill only the target pid.
+- Two opencode servers started **concurrently** on a fresh DB can race the schema migration
+  (`CREATE TABLE workspace` already exists); start them one at a time.
 
 ## 5. Known limitations
 
