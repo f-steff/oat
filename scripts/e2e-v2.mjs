@@ -1,16 +1,16 @@
 // End-to-end smoke test for OAT against a REAL opencode v2 server.
 //
-// Self-contained and self-terminating: starts one `opencode2 serve` instance on
+// Self-contained and self-terminating: starts one `opencode serve` instance on
 // an isolated port + DB, discovers it with the v2 password, routes the v1
 // surface through the mux, and exercises the v1<->v2 translation.
 //
 // Run:  npm run build && node scripts/e2e-v2.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { defaultConfig, defaultStateDir } from "../dist/config.js";
+import { defaultConfig } from "../dist/config.js";
 import { basicAuth, discoverBackends, makeHttpProbe } from "../dist/discovery/discover.js";
 import { listListeners } from "../dist/discovery/ports.js";
 import { Registry } from "../dist/registry.js";
@@ -30,17 +30,9 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  -- " + detail : ""}`);
 }
 
-// Resolve the opencode v2 executable (env, isolated install, or PATH).
-function opencode2Exe() {
-  const candidates = [
-    process.env.OAT_OPENCODE2_BIN,
-    path.join(defaultStateDir(), "opencode2", "node_modules", "@opencode", "cli", "bin", "opencode.exe"),
-    path.join(defaultStateDir(), "opencode2", "lib", "node_modules", "@opencode", "cli", "bin", "opencode.exe"),
-    path.join(defaultStateDir(), "opencode2", "node_modules", "@opencode", "cli", "bin", "opencode"),
-    path.join(defaultStateDir(), "opencode2", "lib", "node_modules", "@opencode", "cli", "bin", "opencode"),
-  ];
-  for (const candidate of candidates) if (candidate && existsSync(candidate)) return candidate;
-  return "opencode2";
+// Resolve the opencode v2 executable (env override, else `opencode` on PATH).
+function opencodeExe() {
+  return process.env.OPENCODE_BIN ?? "opencode";
 }
 
 function killTree(pid) {
@@ -62,7 +54,7 @@ function teardown(reason) {
   } catch {}
   for (const child of children) {
     killTree(child.pid);
-    console.log(`[teardown] killed opencode2 pid=${child.pid}`);
+    console.log(`[teardown] killed opencode pid=${child.pid}`);
   }
 }
 
@@ -82,7 +74,7 @@ process.on("SIGTERM", () => {
 // Start one throwaway v2 server in its own directory/DB, logging to a file.
 function startV2(cwd, logFile, base) {
   const fd = openSync(logFile, "w");
-  const child = spawn(opencode2Exe(), ["serve", "--port", String(V2_PORT), "--hostname", "127.0.0.1"], {
+  const child = spawn(opencodeExe(), ["serve", "--port", String(V2_PORT), "--hostname", "127.0.0.1"], {
     cwd,
     detached: true,
     stdio: ["ignore", fd, fd],
@@ -99,7 +91,7 @@ function startV2(cwd, logFile, base) {
   });
   child.unref();
   children.push(child);
-  child.on("error", (error) => console.error(`[opencode2] spawn error: ${error.message}`));
+  child.on("error", (error) => console.error(`[opencode] spawn error: ${error.message}`));
   return child;
 }
 
@@ -161,13 +153,13 @@ async function main() {
   mkdirSync(dir, { recursive: true });
 
   console.log("[1] starting a real opencode v2 server");
-  console.log(`    using exe: ${opencode2Exe()}`);
+  console.log(`    using exe: ${opencodeExe()}`);
   const log = path.join(base, "v2.log");
   startV2(dir, log, base);
   const healthy = await waitHealth();
   check("v2 server healthy", healthy, `:${V2_PORT}`);
   if (!healthy) {
-    console.error(`--- opencode2 log ---\n${readFileSync(log, "utf8").slice(-2000)}`);
+    console.error(`--- opencode log ---\n${readFileSync(log, "utf8").slice(-2000)}`);
     return 1;
   }
 

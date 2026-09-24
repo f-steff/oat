@@ -11,22 +11,18 @@ npm run e2e:daemon  # daemon lifecycle + singleton + maintenance worker
 npm run e2e         # real opencode: two servers, discovery, routing, SSE
 ```
 
-CI runs `build`, `test` and `lint` on Linux (Node 20 & 22) and on macOS (Node 22). Linux can also be
-exercised locally with Docker; macOS has no Docker image:
+CI runs `build`, `test` and `lint` on Linux (Node 20 & 22) and on macOS (Node 22), plus a **v1 end-to-end**
+job (`ci/e2e-v1.sh`: installs `opencode-ai@1` and runs `scripts/e2e.mjs`). Linux can also be exercised
+locally with Docker; macOS has no Docker image:
 
 ```bash
 docker run --rm -v "<repo>:/src:ro" -w /tmp node:22 bash -lc \
   "cp -r /src /work && cd /work && rm -rf node_modules dist dist-test && npm ci >/dev/null && npm run typecheck && npm run build && npm test && npm run lint"
 ```
 
-The helper installer is cross-platform; verify it in a container too:
-
-```bash
-docker run --rm -v "<repo>:/src:ro" node:22 bash -lc \
-  "node /src/scripts/opencode2.mjs install --prefix /opt/oc2 --bin-dir /usr/local/bin && opencode2 --version && node /src/scripts/opencode2.mjs uninstall --prefix /opt/oc2 --bin-dir /usr/local/bin"
-```
-
-The two `e2e` suites need a real `opencode` binary and are therefore local/manual.
+The v2 end-to-end (`npm run e2e:v2`) needs a real v2 `opencode` (set `OPENCODE_BIN` to its path) and runs
+against an isolated DB/state, so it never touches your real data. The `e2e`/`e2e:daemon` suites are
+otherwise local/manual.
 
 What the automated tests cover: per-OS discovery parsers; health/path probing (**v1 and v2**); routing
 precedence (affinity → directory → session dir → default); proxy behavior (auth/hop-by-hop stripping,

@@ -9,10 +9,10 @@ import {
   expandTokens,
   killProcess,
   launchTerminal,
-  resolveOpencode2Executable,
   resolveOpencodeExecutable,
   type LaunchSpec,
 } from "./launcher.js";
+import { resolveGeneration } from "./generation.js";
 import { basicAuth } from "./discovery/discover.js";
 import type { Registry } from "./registry.js";
 import { isProcessAlive } from "./state.js";
@@ -105,7 +105,7 @@ async function probeHealth(port: number, kind: BackendKind = "v1", password?: st
 export class BackendSupervisor {
   private readonly config: OatConfig;
   private readonly registry: Registry;
-  /** Which opencode generation this supervisor starts (v1 `serve`, or v2 `opencode2 serve`). */
+  /** Which opencode generation this supervisor starts (auto-detected or forced). */
   private readonly kind: BackendKind;
   private readonly spawnBackend: (port: number, directory: string) => SpawnedBackend;
   private readonly probe: (port: number) => Promise<boolean>;
@@ -148,7 +148,11 @@ export class BackendSupervisor {
   /** Build a supervisor, defaulting to real process/net/fetch implementations. */
   constructor(options: SupervisorOptions) {
     this.config = options.config;
-    this.kind = this.config.backendVersion;
+    // Detect the installed generation once ("auto" asks the binary; v1/v2 force it).
+    this.kind = resolveGeneration(
+      this.config.backendVersion,
+      resolveOpencodeExecutable(this.config.opencodeBin).command,
+    );
     this.registry = options.registry;
     this.now = options.now ?? Date.now;
     this.killPid = options.kill ?? killProcess;
@@ -173,14 +177,14 @@ export class BackendSupervisor {
     this.spawnBackend = options.spawnBackend ?? ((port, directory) => this.defaultSpawn(port, directory));
   }
 
-  /** Start a headless opencode server (v1 `serve`, or v2 `opencode2 serve`) for a directory. */
+  /** Start a headless `opencode serve` for a directory (auth differs by generation). */
   private defaultSpawn(port: number, directory: string): SpawnedBackend {
     // Redirect server output to a log file.
     const logDir = path.join(this.config.stateDir, "logs");
     let logFd: number | undefined;
     try {
       fs.mkdirSync(logDir, { recursive: true });
-      logFd = fs.openSync(path.join(logDir, `${this.kind === "v2" ? "opencode2" : "opencode"}-${port}.log`), "a");
+      logFd = fs.openSync(path.join(logDir, `opencode-${port}.log`), "a");
     } catch {
       logFd = undefined;
     }
@@ -192,17 +196,9 @@ export class BackendSupervisor {
         : this.config.v1Password
           ? { ...process.env, OPENCODE_SERVER_PASSWORD: this.config.v1Password }
           : process.env;
-    const { command, args } =
-      this.kind === "v2"
-        ? {
-            command: resolveOpencode2Executable(this.config.opencode2Bin, this.config.stateDir).command,
-            args: expandTokens(this.config.opencode2Args, {
-              port: String(this.config.port),
-              host: this.config.host,
-              host_port: String(port),
-            }),
-          }
-        : { command: resolveOpencodeExecutable(this.config.opencodeBin).command, args: ["serve", "--port", String(port)] };
+    // Both generations spawn `opencode serve --port N`; only auth differs.
+    const command = resolveOpencodeExecutable(this.config.opencodeBin).command;
+    const args = ["serve", "--port", String(port)];
     // No shell: a shell would flash a console window on Windows.
     const child = spawn(command, args, { cwd: directory, detached: true, stdio, windowsHide: true, env });
     // A failed spawn (missing binary) must not crash the daemon.
@@ -268,7 +264,7 @@ export class BackendSupervisor {
       return null;
     }
     // Preferred: a visible terminal the user can work in. v2 uses hidden
-    // `opencode2 serve` backends (the user runs the TUI with `oat opencode2`).
+    // `opencode serve` backends (the user runs the TUI with `oat opencode`).
     if (this.useTerminal && this.kind !== "v2") {
       const prior = this.launched.get(normalized);
       if (prior) {

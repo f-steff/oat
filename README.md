@@ -22,9 +22,8 @@ routes each request to the right instance.
 ## Requirements
 
 - **Node.js ≥ 20** and npm
-- **opencode** on `PATH` — v1 (`opencode`) and/or v2 (`opencode2`); see
-  [Installing opencode v1 and v2 side by side](#installing-opencode-v1-and-v2-side-by-side) (or set
-  `OPENCODE_BIN` / `OAT_OPENCODE2_BIN` to a full path)
+- **opencode** on `PATH` — v1 (`opencode-ai`) or v2 (`@opencode/cli`). OAT **auto-detects** the installed
+  generation (force it with `OAT_BACKEND_VERSION=v1|v2`, or point `OPENCODE_BIN` at another binary)
 - **sesori-bridge** for the phone connection
 - **git** to obtain the source
 
@@ -44,60 +43,19 @@ oat version        # expect: 0.2.0
 Prefer not to install a global command? Run from the repo after `npm run build`:
 `bin/oat <command>` (POSIX) or `bin\oat <command>` (Windows), or `node dist/cli.js <command>`.
 
-### Installing opencode v1 and v2 side by side
+### Installing opencode
 
-opencode v1 (`opencode-ai`) and v2 (`@opencode/cli`) **both ship a binary called `opencode`**, so a global
-v2 install would overwrite v1's command. Install v1 normally, then use OAT's helper to add v2 as a
-separate `opencode2` command: v2 goes into an isolated prefix, so the two never collide.
+Install whichever generation you use, as the `opencode` command:
 
 ```bash
-# 1. v1 — provides the `opencode` command
-npm install -g opencode-ai
-
-# 2. v2 — isolated install; provides the `opencode2` command (v1's `opencode` stays intact)
-npm run opencode2:install
-
-# 3. verify both coexist and see where each resolves
-npm run opencode2:status  # lists `opencode` (v1) and `opencode2` (v2) with versions/paths
-opencode  --version       # 1.x
-opencode2 --version       # 2.x
+npm install -g opencode-ai     # v1
+# or
+npm install -g @opencode/cli   # v2
 ```
 
-Run either from a normal terminal — `opencode` is v1, `opencode2` is v2 — or through OAT: `oat opencode`
-(v1) / `oat opencode2` (v2) / `OAT_BACKEND_VERSION=v2` (OAT-managed v2 backends).
-
-```bash
-npm run opencode2:status      # show both environments (and warn if v1 was overwritten)
-npm run opencode2:update      # update v2 in place (isolated; only the `opencode2` wrapper changes)
-npm run opencode2:uninstall   # remove the `opencode2` wrapper and the isolated v2 install (v1 untouched)
-```
-
-Updating (and why the built-in self-upgraders are unsafe here):
-
-- **v1:** `npm install -g opencode-ai@latest` (or `opencode upgrade`). This only touches v1's `opencode` —
-  our v2 lives in an isolated prefix, so v1 updates cannot disturb it.
-- **v2:** `npm run opencode2:update` — reinstalls `@opencode/cli` into the same isolated prefix and rewrites
-  only the `opencode2` wrapper, so v1 is untouched. Pin a version with
-  `npm run opencode2:update -- --version 2.0.15`.
-- **Avoid `opencode2 upgrade`** for this setup: depending on `--method` (npm/curl/…) it can install
-  globally or elsewhere and recreate a global `opencode`, shadowing v1. If you ever run it, check with
-  `npm run opencode2:status`.
-
-How it works and platform notes:
-
-- **v1 is never touched.** v2 is installed into an isolated prefix, and the helper **refuses** a `--prefix`
-  that maps onto your global bin (which is where npm would otherwise write an `opencode` shim and shadow
-  v1). `npm run opencode2:status` verifies both commands and warns if v1's `opencode` came back as 2.x.
-- The isolated v2 prefix defaults to `<state-dir>/opencode2`:
-  Windows `%LOCALAPPDATA%\oat\opencode2`, macOS `~/Library/Application Support/oat/opencode2`,
-  Linux `${XDG_STATE_HOME:-~/.local/state}/oat/opencode2`.
-- The `opencode2` wrapper is written to your npm global bin (Windows `npm prefix -g`; on Linux/macOS its
-  `bin/`), which is already on `PATH`. On Linux/macOS that may need `sudo`; alternatively write it to a
-  dir already on `PATH`, e.g. `npm run opencode2:install -- --bin-dir ~/.local/bin`.
-- The helper passes `--allow-scripts=@opencode/cli` so the package's postinstall can download/select the
-  native binary (npm blocks install scripts by default). Change locations with `--prefix`/`--bin-dir`,
-  and pin a release with `npm run opencode2:install -- --version 2.0.15`.
-- Uninstall leaves v1 fully intact; re-run `npm run opencode2:install` any time to restore v2.
+> **Use one generation at a time.** opencode v2 migrates opencode's shared database
+> (`~/.local/share/opencode/opencode.db`) in place, after which v1 can no longer read it. OAT detects
+> whichever `opencode` is installed and adapts (routing, auth, and v1↔v2 translation for the bridge).
 
 ## Start
 
@@ -125,37 +83,26 @@ oat sesori-bridge  # == sesori-bridge --opencode-no-auto-start --opencode-port <
 
 Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the same port.
 
-## Running v1 and v2 with OAT in parallel
+## Generations (v1 / v2)
 
-One OAT daemon can drive a **mix of v1 and v2 instances at the same time**. It detects each backend's
-generation (v1 answers `/global/health`; v2 answers `/api/info` behind HTTP Basic auth), tags it, and
-routes per project directory. Because the Sesori bridge speaks v1, OAT also translates v1↔v2 — so the
-phone can drive v2 instances with **no bridge change**.
+OAT works with **whichever opencode generation is installed**. It detects each backend's generation (v1
+answers `/global/health`; v2 answers `/api/info` behind HTTP Basic auth), tags it, and routes per project
+directory. Because the Sesori bridge speaks v1, OAT also translates v1↔v2, so the phone can drive v2
+instances with **no bridge change**.
 
 ```bash
 oat start                     # one OAT daemon
-
-cd ~/proj-a && oat opencode   # v1 TUI (OAT injects a port so it is discoverable)
-cd ~/proj-b && oat opencode2  # v2 TUI as a private server (password exported for OAT)
-
-oat list                      # both appear, distinguished by VERSION (1.x vs 2.x)
-oat sesori-bridge             # the bridge reaches both through OAT
+cd <project> && oat opencode  # the installed generation's TUI (v1 injects a port; v2 runs a private server)
+oat list                      # shows each backend's KIND (v1/v2) and VERSION
+oat sesori-bridge             # the bridge reaches them through OAT
 ```
 
-- Lazily-started backends (a phone action for a project with no instance) use the generation from
-  `OAT_BACKEND_VERSION` (`v1` by default; `v2` starts `opencode2 serve`). `oat opencode2` instances are
-  always v2.
-- `oat stop` stops the daemon and any hidden OAT-started servers; your own `opencode`/`opencode2` windows
-  are left alone.
-
-Internals:
-
-- **Discovery** probes `/global/health` (v1) then `/api/info` with the known password (v2), and tags each
-  backend with its generation.
-- **Managed v2** (`OAT_BACKEND_VERSION=v2`): OAT starts `opencode2 serve --port <n>` per project with an
-  OAT-chosen `OPENCODE_SERVER_PASSWORD`, and adds `Authorization: Basic` upstream.
-- **`oat opencode2 [args]`** runs the v2 TUI as a private server (`--standalone`) with that password
-  exported; `oat opencode` remains for v1.
+- **Detection** — `OAT_BACKEND_VERSION` defaults to `auto`: OAT asks the installed `opencode` for its
+  version (`1.x` = v1, `opencode v2.x` = v2). Force it with `v1`/`v2`.
+- **Lazily-started backends** (a phone action for a project with no instance) use the detected generation:
+  v1 opens a visible terminal; v2 starts a hidden `opencode serve` with an OAT-chosen
+  `OPENCODE_SERVER_PASSWORD`.
+- **`oat status`** reports the generation; **`oat list`** shows each backend's `KIND`.
 - **Translation** (`OAT_TRANSLATE_V2`, on by default) maps the bridge's v1 requests onto v2 `/api/*` and
   translates v2 responses/events back to v1 shapes; set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
 
@@ -176,9 +123,7 @@ The v2 path is newer and less battle-tested than v1; see Known limitations.
 | `OAT_BRIDGE_BIN` | `sesori-bridge` | Bridge executable used by `oat sesori-bridge` |
 | `OAT_BRIDGE_ARGS` | `--opencode-no-auto-start --opencode-port {port}` | Args injected before your bridge args (`{port}`, `{host}`) |
 | `OAT_OPENCODE_ARGS` | `--port {host_port} --hostname {host}` | Args injected by `oat opencode` when no network flag is given |
-| `OAT_BACKEND_VERSION` | `v1` | Generation OAT starts for projects (`v2` uses `opencode2 serve`) |
-| `OAT_OPENCODE2_BIN` | `opencode2` | opencode v2 executable (isolated install or PATH) |
-| `OAT_OPENCODE2_ARGS` | `serve --port {host_port} --hostname {host}` | Args for a managed v2 server |
+| `OAT_BACKEND_VERSION` | `auto` | Generation OAT uses (`auto` detects the installed `opencode`; `v1`/`v2` force it) |
 | `OAT_V2_PASSWORD` | generated per daemon | Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 servers |
 | `OAT_V1_PASSWORD` | `OPENCODE_SERVER_PASSWORD` | Password for password-protected v1 servers (Basic auth) |
 | `OAT_TRANSLATE_V2` | `1` | Translate v1<->v2 for the bridge (`0` disables) |
@@ -198,8 +143,7 @@ oat status                show daemon status
 oat list                  list discovered opencode backends
 oat reload                re-scan for opencode backends
 oat stop                  stop the daemon
-oat opencode [args]       run opencode in this terminal (args after 'opencode' go to opencode)
-oat opencode2 [args]      run opencode v2 in this terminal as a private server (args pass through)
+oat opencode [args]       run the installed opencode here (args pass through)
 oat sesori-bridge [args]  run the bridge here, pointed at OAT (args pass through)
 oat serve                 run the daemon in the foreground (internal)
 oat version               print version
@@ -210,13 +154,14 @@ oat version               print version
 
 ### `oat opencode`
 
-Runs opencode **in the terminal you are in** (arguments after `opencode` pass through), ensuring the
-daemon is up so the bridge connects to it. Because a plain opencode TUI exposes no port, OAT injects a
-free `--port`/`--hostname` so the instance is discoverable.
+Runs opencode **in the terminal you are in** (arguments pass through), ensuring the daemon is up so the
+bridge connects to it. The behaviour follows the detected generation: **v1** gets a free
+`--port`/`--hostname` injected (a plain v1 TUI exposes no port); **v2** runs a private server
+(`--standalone`) with `OPENCODE_SERVER_PASSWORD` exported so OAT can discover and route to it.
 
 ```bash
 cd <project>
-oat opencode                 # opencode TUI, here, in this folder
+oat opencode                 # the installed generation's TUI, here, in this folder
 oat opencode -s ses_...      # any opencode args pass through
 ```
 
@@ -224,18 +169,6 @@ oat opencode -s ses_...      # any opencode args pass through
 
 Runs the bridge in the current terminal, pointed at OAT. The injected flags are a template
 (`OAT_BRIDGE_ARGS`); `oat --port 5000 sesori-bridge` moves both off a busy 4096.
-
-### `oat opencode2`
-
-Runs opencode **v2** in the current terminal as a private server (`--standalone`) so it stays
-per-project, exporting `OPENCODE_SERVER_PASSWORD` so OAT can discover and route to it. Arguments pass
-through. Use `oat opencode` (not `opencode2`) for a v1 TUI.
-
-```bash
-cd <project>
-oat opencode2                 # v2 TUI, private server, this folder
-oat opencode2 --server http://127.0.0.1:4096   # or attach to a specific server
-```
 
 ## Known limitations
 
@@ -245,7 +178,8 @@ oat opencode2 --server http://127.0.0.1:4096   # or attach to a specific server
   password (`OAT_V2_PASSWORD`); user-started v2 servers without it are not discoverable. The v1<->v2
   **translation** covers the endpoints the bridge uses and is intentionally partial (see
   `OAT_TRANSLATE_V2`); v2 SSE events are passed through without per-type reshaping.
-- A **standalone launcher shim** for opencode is not implemented.
+- Running **v1 and v2 against the same opencode data directory is not supported** (v2 migrates it in
+  place); use one generation at a time.
 - **PTY/WebSocket** proxying is implemented but only handshake-tested; no live PTY test yet.
 - Distribution is **source + `npm link`** only; no published package or single binary.
 - The daemon's port is **unauthenticated** and bound to loopback by default.
