@@ -111,7 +111,8 @@ duplicate `server.connected` events are collapsed, and upstreams reconnect with 
 opencode v2 changes the model: endpoints live under `/api/*` behind HTTP Basic auth (user `opencode`,
 password printed or set via `OPENCODE_SERVER_PASSWORD`), and the CLI ships as `@opencode/cli`. v2 also
 migrates opencode's shared DB in place, so OAT targets **one active generation** (whichever `opencode` is
-installed) rather than driving both against the same data directory.
+installed) rather than driving both against the same data directory. Back up the DB before switching and
+recover older sessions from the DB if needed — see README → *Migrating from opencode v1 to v2*.
 
 - **Detection** (`generation.ts`): ask the installed `opencode` for its version (`1.x` = v1,
   `opencode v2.x` = v2); `OAT_BACKEND_VERSION=auto` (default) uses this, `v1`/`v2` force it. Per request,

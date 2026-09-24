@@ -170,6 +170,35 @@ oat opencode -s ses_...      # any opencode args pass through
 Runs the bridge in the current terminal, pointed at OAT. The injected flags are a template
 (`OAT_BRIDGE_ARGS`); `oat --port 5000 sesori-bridge` moves both off a busy 4096.
 
+## Migrating from opencode v1 to v2
+
+opencode v2 **migrates opencode's shared database in place** the first time it runs (its migrations include
+one that clears v1 session permissions). After that, v1 can no longer read the database, and older
+sessions may not appear in v2's session list. This is opencode's behaviour, not OAT's — treat the switch as
+one-way and prepare for it:
+
+1. **Back up first:** copy `~/.local/share/opencode/opencode.db` (plus `opencode.db-wal` / `-shm`) and
+   `~/.local/state/opencode` before installing or starting v2. Keep the copy until you are satisfied.
+2. **One generation at a time:** do not run v1 and v2 against the same data directory. OAT targets
+   whichever `opencode` is installed (`OAT_BACKEND_VERSION=auto`).
+3. **If a session seems missing afterwards,** the data is still there — older v1 rows live in the
+   `message` / `part` tables. Extract them read-only:
+
+   ```sql
+   SELECT datetime(m.time_created/1000,'unixepoch') AS t,
+          json_extract(m.data,'$.role')  AS role,
+          json_extract(p.data,'$.text')  AS text
+   FROM part p JOIN message m ON p.message_id = m.id
+   WHERE p.session_id = 'ses_...' AND json_extract(p.data,'$.type') = 'text'
+   ORDER BY m.time_created ASC, p.time_created ASC;
+   ```
+
+   `research/recover-session.mjs` does this for one or more sessions (read-only):
+   `node research/recover-session.mjs <outDir> <sessionId> [<sessionId> ...] [--tail N]`.
+4. **MCP servers** are configured per project (`opencode.json` → `mcp.servers`) or globally
+   (`~/.config/opencode/opencode.json`). Under OAT's per-project servers they stay isolated; put shared
+   servers in the global config only deliberately.
+
 ## Known limitations
 
 - A plain `opencode` TUI (started without `--port`/`--hostname`) exposes **no port** and is not
