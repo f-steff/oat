@@ -22,7 +22,8 @@ routes each request to the right instance.
 ## Requirements
 
 - **Node.js ≥ 20** and npm
-- **opencode** on `PATH` (or set `OPENCODE_BIN` to its full path)
+- **opencode** on `PATH` — v1 (`opencode-ai`) or v2 (`@opencode/cli`). OAT **auto-detects** the installed
+  generation (force it with `OAT_BACKEND_VERSION=v1|v2`, or point `OPENCODE_BIN` at another binary)
 - **sesori-bridge** for the phone connection
 - **git** to obtain the source
 
@@ -36,10 +37,25 @@ cd oat
 npm install
 npm run build      # required: the `oat` shim runs the compiled dist/
 npm link           # puts `oat` on your PATH (Windows: %APPDATA%\npm)
-oat version        # expect: 0.1.0
+oat version        # expect: 0.2.0
 ```
 
-Prefer not to install a global command? Run from the repo: `node dist/cli.js <command>`.
+Prefer not to install a global command? Run from the repo after `npm run build`:
+`bin/oat <command>` (POSIX) or `bin\oat <command>` (Windows), or `node dist/cli.js <command>`.
+
+### Installing opencode
+
+Install whichever generation you use, as the `opencode` command:
+
+```bash
+npm install -g opencode-ai     # v1
+# or
+npm install -g @opencode/cli   # v2
+```
+
+> **Use one generation at a time.** opencode v2 migrates opencode's shared database
+> (`~/.local/share/opencode/opencode.db`) in place, after which v1 can no longer read it. OAT detects
+> whichever `opencode` is installed and adapts (routing, auth, and v1↔v2 translation for the bridge).
 
 ## Start
 
@@ -67,6 +83,31 @@ oat sesori-bridge  # == sesori-bridge --opencode-no-auto-start --opencode-port <
 
 Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the same port.
 
+## Generations (v1 / v2)
+
+OAT works with **whichever opencode generation is installed**. It detects each backend's generation (v1
+answers `/global/health`; v2 answers `/api/info` behind HTTP Basic auth), tags it, and routes per project
+directory. Because the Sesori bridge speaks v1, OAT also translates v1↔v2, so the phone can drive v2
+instances with **no bridge change**.
+
+```bash
+oat start                     # one OAT daemon
+cd <project> && oat opencode  # the installed generation's TUI (v1 injects a port; v2 runs a private server)
+oat list                      # shows each backend's KIND (v1/v2) and VERSION
+oat sesori-bridge             # the bridge reaches them through OAT
+```
+
+- **Detection** — `OAT_BACKEND_VERSION` defaults to `auto`: OAT asks the installed `opencode` for its
+  version (`1.x` = v1, `opencode v2.x` = v2). Force it with `v1`/`v2`.
+- **Lazily-started backends** (a phone action for a project with no instance) use the detected generation:
+  v1 opens a visible terminal; v2 starts a hidden `opencode serve` with an OAT-chosen
+  `OPENCODE_SERVER_PASSWORD`.
+- **`oat status`** reports the generation; **`oat list`** shows each backend's `KIND`.
+- **Translation** (`OAT_TRANSLATE_V2`, on by default) maps the bridge's v1 requests onto v2 `/api/*` and
+  translates v2 responses/events back to v1 shapes; set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
+
+The v2 path is newer and less battle-tested than v1; see Known limitations.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -82,6 +123,10 @@ Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the sam
 | `OAT_BRIDGE_BIN` | `sesori-bridge` | Bridge executable used by `oat sesori-bridge` |
 | `OAT_BRIDGE_ARGS` | `--opencode-no-auto-start --opencode-port {port}` | Args injected before your bridge args (`{port}`, `{host}`) |
 | `OAT_OPENCODE_ARGS` | `--port {host_port} --hostname {host}` | Args injected by `oat opencode` when no network flag is given |
+| `OAT_BACKEND_VERSION` | `auto` | Generation OAT uses (`auto` detects the installed `opencode`; `v1`/`v2` force it) |
+| `OAT_V2_PASSWORD` | generated per daemon | Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 servers |
+| `OAT_V1_PASSWORD` | `OPENCODE_SERVER_PASSWORD` | Password for password-protected v1 servers (Basic auth) |
+| `OAT_TRANSLATE_V2` | `1` | Translate v1<->v2 for the bridge (`0` disables) |
 | `OAT_MAX_INSTANCES` | `32` | Safety cap on concurrently running OAT-started instances |
 | `OAT_SPAWNS_PER_MINUTE` | `6` | Burst guard: max new instances started per rolling minute |
 | `OAT_STATE_DIR` | per-OS | Where state/logs live |
@@ -98,7 +143,7 @@ oat status                show daemon status
 oat list                  list discovered opencode backends
 oat reload                re-scan for opencode backends
 oat stop                  stop the daemon
-oat opencode [args]       run opencode in this terminal (args after 'opencode' go to opencode)
+oat opencode [args]       run the installed opencode here (args pass through)
 oat sesori-bridge [args]  run the bridge here, pointed at OAT (args pass through)
 oat serve                 run the daemon in the foreground (internal)
 oat version               print version
@@ -109,13 +154,14 @@ oat version               print version
 
 ### `oat opencode`
 
-Runs opencode **in the terminal you are in** (arguments after `opencode` pass through), ensuring the
-daemon is up so the bridge connects to it. Because a plain opencode TUI exposes no port, OAT injects a
-free `--port`/`--hostname` so the instance is discoverable.
+Runs opencode **in the terminal you are in** (arguments pass through), ensuring the daemon is up so the
+bridge connects to it. The behaviour follows the detected generation: **v1** gets a free
+`--port`/`--hostname` injected (a plain v1 TUI exposes no port); **v2** runs a private server
+(`--standalone`) with `OPENCODE_SERVER_PASSWORD` exported so OAT can discover and route to it.
 
 ```bash
 cd <project>
-oat opencode                 # opencode TUI, here, in this folder
+oat opencode                 # the installed generation's TUI, here, in this folder
 oat opencode -s ses_...      # any opencode args pass through
 ```
 
@@ -124,18 +170,60 @@ oat opencode -s ses_...      # any opencode args pass through
 Runs the bridge in the current terminal, pointed at OAT. The injected flags are a template
 (`OAT_BRIDGE_ARGS`); `oat --port 5000 sesori-bridge` moves both off a busy 4096.
 
+## Migrating from opencode v1 to v2
+
+opencode v2 **migrates opencode's shared database in place** the first time it runs (its migrations include
+one that clears v1 session permissions). After that, v1 can no longer read the database, and older
+sessions may not appear in v2's session list. This is opencode's behaviour, not OAT's — treat the switch as
+one-way and prepare for it:
+
+1. **Back up first:** copy `~/.local/share/opencode/opencode.db` (plus `opencode.db-wal` / `-shm`) and
+   `~/.local/state/opencode` before installing or starting v2. Keep the copy until you are satisfied.
+2. **One generation at a time:** do not run v1 and v2 against the same data directory. OAT targets
+   whichever `opencode` is installed (`OAT_BACKEND_VERSION=auto`).
+3. **If a session seems missing afterwards,** the data is still there — older v1 rows live in the
+   `message` / `part` tables. Extract them read-only:
+
+   ```sql
+   SELECT datetime(m.time_created/1000,'unixepoch') AS t,
+          json_extract(m.data,'$.role')  AS role,
+          json_extract(p.data,'$.text')  AS text
+   FROM part p JOIN message m ON p.message_id = m.id
+   WHERE p.session_id = 'ses_...' AND json_extract(p.data,'$.type') = 'text'
+   ORDER BY m.time_created ASC, p.time_created ASC;
+   ```
+
+   `research/recover-session.mjs` does this for one or more sessions (read-only):
+   `node research/recover-session.mjs <outDir> <sessionId> [<sessionId> ...] [--tail N]`.
+4. **MCP servers** are configured per project (`opencode.json` → `mcp.servers`) or globally
+   (`~/.config/opencode/opencode.json`). Under OAT's per-project servers they stay isolated; put shared
+   servers in the global config only deliberately.
+
 ## Known limitations
 
 - A plain `opencode` TUI (started without `--port`/`--hostname`) exposes **no port** and is not
   routable. Use `oat opencode` (injects a port), `opencode serve`, or `opencode --port N`.
-- **opencode v2 detection** (single unified server) and a **standalone launcher shim** are not
-  implemented.
+- **opencode v2 support is newer and less tested than v1.** v2 backends must be reachable with a known
+  password (`OAT_V2_PASSWORD`); user-started v2 servers without it are not discoverable. The v1<->v2
+  **translation** covers the endpoints the bridge uses and is intentionally partial (see
+  `OAT_TRANSLATE_V2`); v2 SSE events are passed through without per-type reshaping.
+- Running **v1 and v2 against the same opencode data directory is not supported** (v2 migrates it in
+  place); use one generation at a time.
 - **PTY/WebSocket** proxying is implemented but only handshake-tested; no live PTY test yet.
 - Distribution is **source + `npm link`** only; no published package or single binary.
 - The daemon's port is **unauthenticated** and bound to loopback by default.
-- Backends secured with `OPENCODE_SERVER_PASSWORD` are not supported yet.
 - OAT assumes a **single daemon**; multiple daemons are not coordinated.
-- Real-opencode end-to-end tests are local/manual (they need opencode installed).
+- Real-opencode end-to-end tests are local/manual (they need opencode installed). Cross-OS checks run on
+  Windows + Linux (Docker) locally and include a macOS CI job (no macOS Docker image exists).
+
+## Known issues
+
+Bugs we are aware of, with upstream links where the cause is outside OAT.
+
+- **A prompt sent from the phone appears twice in the local opencode TUI** (the model/tool runs once).
+  The Sesori Bridge reserves a user message and then re-dispatches it with the same `messageID` and
+  `parts`, so opencode appends the text a second time. OAT only proxies the two calls. Tracked upstream:
+  [sesori-ai/sesori_apps_monorepo#1596](https://github.com/sesori-ai/sesori_apps_monorepo/issues/1596).
 
 ## Run at login (optional)
 

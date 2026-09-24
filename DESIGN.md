@@ -106,6 +106,33 @@ duplicate `server.connected` events are collapsed, and upstreams reconnect with 
 | **Anchors never listed; reaped on start/stop** | Orphaned workers cannot masquerade as projects. |
 | **`oat stop` kills only the daemon pid** | Never closes your terminal windows. |
 
+## opencode v1 / v2
+
+opencode v2 changes the model: endpoints live under `/api/*` behind HTTP Basic auth (user `opencode`,
+password printed or set via `OPENCODE_SERVER_PASSWORD`), and the CLI ships as `@opencode/cli`. v2 also
+migrates opencode's shared DB in place, so OAT targets **one active generation** (whichever `opencode` is
+installed) rather than driving both against the same data directory. Back up the DB before switching and
+recover older sessions from the DB if needed — see README → *Migrating from opencode v1 to v2*.
+
+- **Detection** (`generation.ts`): ask the installed `opencode` for its version (`1.x` = v1,
+  `opencode v2.x` = v2); `OAT_BACKEND_VERSION=auto` (default) uses this, `v1`/`v2` force it. Per request,
+  discovery probes v1 `/global/health`, else v2 `/api/info` with the known password; each `Backend` is
+  tagged `kind: "v1" | "v2"` and, when known, carries its `password`.
+- **Launching** (`cli.ts`/`supervisor.ts`): `oat opencode` follows the detected generation — v1 injects a
+  `--port`/`--hostname`; v2 runs a private server (`--standalone`) with `OPENCODE_SERVER_PASSWORD`.
+  Lazily-started backends: v1 opens a visible terminal; v2 starts a hidden `opencode serve --port <n>`.
+- **Auth** (`server.ts`): the proxy and WebSocket replay add `Authorization: Basic` for any backend that
+  carries a password (v2 always; v1 when `OPENCODE_SERVER_PASSWORD`/`OAT_V1_PASSWORD` is set).
+- **Translation** (`translate.ts`, `OAT_TRANSLATE_V2`): the bridge speaks v1, so OAT maps the v1 routes
+  it uses onto v2 — `/session/:id/{message,prompt_async}` → `/api/session/:id/prompt`, `abort` →
+  `interrupt`, `/path` → `/api/location`, etc. — passes `x-opencode-directory` as the `directory` query,
+  unwraps v2's `{data}` envelopes, and answers a v1 `noReply` "reserve" locally (v2 has no reserve and
+  would otherwise double-admit the user message). v2 `/api/event` is fanned in like v1 `/global/event`.
+- **Status** (`cli.ts`): `oat status` reports the daemon's generation; `oat list` shows each backend's
+  `KIND`.
+
+This layer is deliberately partial and toggleable: set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
+
 ## 4. Learnings (brief)
 
 - Interactive opencode exposes **no TCP port** unless a network flag is passed → OAT must inject a port.
@@ -114,6 +141,8 @@ duplicate `server.connected` events are collapsed, and upstreams reconnect with 
   the user message is duplicated.
 - Long-lived child processes can hang supervising shells; OAT must run **detached**.
 - Killing a process **tree** (`taskkill /T`) can close terminal tabs; kill only the target pid.
+- Two opencode servers started **concurrently** on a fresh DB can race the schema migration
+  (`CREATE TABLE workspace` already exists); start them one at a time.
 
 ## 5. Known limitations
 

@@ -15,6 +15,9 @@ export interface RawListener {
   address: string;
 }
 
+/** opencode generation a backend speaks. v2 uses `/api/*` and HTTP Basic auth. */
+export type BackendKind = "v1" | "v2";
+
 /** A live opencode server that OAT has discovered and health-probed. */
 export interface Backend {
   /** The port the opencode server listens on. */
@@ -33,6 +36,10 @@ export interface Backend {
   lastSeen: number;
   /** True only for OAT's own fallback "anchor" server (never routed while others exist). */
   anchor?: boolean;
+  /** Protocol generation (`"v2"` requires Basic auth and `/api/*` translation). */
+  kind?: BackendKind;
+  /** Password for v2 HTTP Basic auth, when OAT knows it (managed/`OAT_V2_PASSWORD`). */
+  password?: string;
 }
 
 /** Why a particular backend was chosen for a request (useful in logs/tests). */
@@ -78,4 +85,12 @@ export interface OatConfig {
   bridgeArgs: string;
   /** Args injected for `oat opencode` when no network flag is given (`{host_port}`, `{host}`). */
   opencodeArgs: string;
+  /** Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 backends (HTTP Basic). */
+  v2Password: string;
+  /** When true, translate v1<->v2 for the bridge; `OAT_TRANSLATE_V2=0` disables it. */
+  translateV2: boolean;
+  /** Generation OAT uses for projects (`auto` detects the installed `opencode` binary). */
+  backendVersion: BackendKind | "auto";
+  /** Password for v1 servers protected with `OPENCODE_SERVER_PASSWORD` (optional). */
+  v1Password?: string;
 }
