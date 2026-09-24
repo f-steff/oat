@@ -38,6 +38,7 @@
     "e2e:v2": "node scripts/e2e-v2.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "opencode2:install": "node scripts/opencode2.mjs install",
+    "opencode2:update": "node scripts/opencode2.mjs update",
     "opencode2:uninstall": "node scripts/opencode2.mjs uninstall",
     "opencode2:status": "node scripts/opencode2.mjs status"
   },

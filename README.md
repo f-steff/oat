@@ -68,8 +68,20 @@ Run either from a normal terminal — `opencode` is v1, `opencode2` is v2 — or
 
 ```bash
 npm run opencode2:status      # show both environments (and warn if v1 was overwritten)
+npm run opencode2:update      # update v2 in place (isolated; only the `opencode2` wrapper changes)
 npm run opencode2:uninstall   # remove the `opencode2` wrapper and the isolated v2 install (v1 untouched)
 ```
+
+Updating (and why the built-in self-upgraders are unsafe here):
+
+- **v1:** `npm install -g opencode-ai@latest` (or `opencode upgrade`). This only touches v1's `opencode` —
+  our v2 lives in an isolated prefix, so v1 updates cannot disturb it.
+- **v2:** `npm run opencode2:update` — reinstalls `@opencode/cli` into the same isolated prefix and rewrites
+  only the `opencode2` wrapper, so v1 is untouched. Pin a version with
+  `npm run opencode2:update -- --version 2.0.15`.
+- **Avoid `opencode2 upgrade`** for this setup: depending on `--method` (npm/curl/…) it can install
+  globally or elsewhere and recreate a global `opencode`, shadowing v1. If you ever run it, check with
+  `npm run opencode2:status`.
 
 How it works and platform notes:
 

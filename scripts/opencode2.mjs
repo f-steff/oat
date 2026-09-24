@@ -255,6 +255,11 @@ function install(args) {
   return 0;
 }
 
+/** Reinstall/update v2 in place (same isolated prefix), then verify. */
+function update(args) {
+  return install({ ...args, force: true });
+}
+
 function refreshWrappers(binary, binDir) {
   const written = writeWrappers(binary, binDir);
   process.stdout.write(`\nopencode v2 ready:\n  binary:  ${binary}\n`);
@@ -287,7 +292,7 @@ function status(args) {
 
 function usage() {
   process.stdout.write(
-    `Usage: node scripts/opencode2.mjs <install|uninstall|status> [options]\n\n` +
+    `Usage: node scripts/opencode2.mjs <install|update|uninstall|status> [options]\n\n` +
       `Installs opencode v2 (@opencode/cli) side by side with v1, without overwriting\n` +
       `v1's \`opencode\` command (v2 is exposed as \`opencode2\`).\n\n` +
       `Options:\n` +
@@ -305,7 +310,7 @@ if (args.help) {
   usage();
   process.exit(0);
 }
-const commands = { install, uninstall, status };
+const commands = { install, update, uninstall, status };
 const fn = commands[command];
 if (!fn) {
   usage();
