@@ -418,42 +418,46 @@ async function runDaemon(config: OatConfig): Promise<void> {
     v2Password: config.v2Password,
   };
 
-  // One discovery pass: enumerate listeners, probe, and update the registry.
-  let scanning = false;
-  const scan = async (): Promise<void> => {
-    if (scanning) return;
-    scanning = true;
-    try {
-      const listeners = await listListeners();
-      // Never treat OAT's own port, or a managed (lazily started) backend, as a
-      // fresh discovery candidate.
-      const skipPorts = new Set<number>([config.port, ...registry.managedPorts()]);
-      const backends = await discoverBackends(listeners, {
-        probe,
-        skipPorts,
-        v2Password: config.v2Password,
-        v1Password: config.v1Password,
-        anchorDir: path.join(config.stateDir, "anchor"),
-      });
-      // Also attach to a user-started v2 shared service (its password lives on disk).
-      const service = await readV2Service();
-      if (service) {
-        const extra = await probeV2Endpoint(service.url, service.password, config.probeTimeoutMs);
-        if (extra && extra.port && !skipPorts.has(extra.port) && !backends.some((b) => b.port === extra.port)) {
-          // Mark it so `oat list` can label it and expand per-project rows.
-          backends.push({ ...extra, shared: true });
+  // One discovery pass: probe listeners and update the registry. Concurrent callers
+  // (the periodic timer and `/reload`) share a single in-flight scan, so a reload
+  // never returns stale data.
+  let scanPromise: Promise<void> | null = null;
+  const scan = (): Promise<void> => {
+    if (scanPromise) return scanPromise;
+    scanPromise = (async (): Promise<void> => {
+      try {
+        const listeners = await listListeners();
+        // Never treat OAT's own port, or a managed (lazily started) backend, as a
+        // fresh discovery candidate.
+        const skipPorts = new Set<number>([config.port, ...registry.managedPorts()]);
+        const backends = await discoverBackends(listeners, {
+          probe,
+          skipPorts,
+          v2Password: config.v2Password,
+          v1Password: config.v1Password,
+          anchorDir: path.join(config.stateDir, "anchor"),
+        });
+        // Also attach to a user-started v2 shared service (its password lives on disk).
+        const service = await readV2Service();
+        if (service) {
+          const extra = await probeV2Endpoint(service.url, service.password, config.probeTimeoutMs);
+          if (extra && extra.port && !skipPorts.has(extra.port) && !backends.some((b) => b.port === extra.port)) {
+            // Mark it so `oat list` can label it and expand per-project rows.
+            backends.push({ ...extra, shared: true });
+          }
         }
+        registry.set(backends);
+        const summary = backends
+          .map((b) => `${b.port}${b.primaryDirectory ? `@${b.primaryDirectory}` : ""}`)
+          .join(", ");
+        log.info(`discovered ${backends.length} backend(s): ${summary || "none"}`);
+      } catch (error) {
+        log.warn(`discovery scan failed: ${(error as Error).message}`);
+      } finally {
+        scanPromise = null;
       }
-      registry.set(backends);
-      const summary = backends.map((b) => `${b.port}${b.primaryDirectory ? `@${b.primaryDirectory}` : ""}`).join(", ");
-      log.info(`discovered ${backends.length} backend(s): ${summary || "none"}`);
-      // The anchor is a persistent maintenance worker: it is started on demand
-      // and stopped only by `oat stop`, never when real instances appear.
-    } catch (error) {
-      log.warn(`discovery scan failed: ${(error as Error).message}`);
-    } finally {
-      scanning = false;
-    }
+    })();
+    return scanPromise;
   };
 
   // The supervisor lazily provides an opencode instance for a directory with no
