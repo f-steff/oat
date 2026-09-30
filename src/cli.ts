@@ -259,7 +259,7 @@ async function simpleCommand(config: OatConfig, route: string, okMessage: string
  */
 async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<number> {
   // Ensure the daemon is up so it can discover and route this instance.
-  await ensureDaemon(config);
+  const state = await ensureDaemon(config);
   const directory = process.cwd();
   const { command, shell } = resolveOpencodeExecutable(config.opencodeBin);
   const generation = resolveGeneration(config.backendVersion, command);
@@ -275,7 +275,7 @@ async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<n
     return spawnForeground(command, args, {
       cwd: directory,
       shell,
-      env: { ...process.env, OPENCODE_SERVER_PASSWORD: config.v2Password },
+      env: { ...process.env, OPENCODE_SERVER_PASSWORD: state.v2Password ?? config.v2Password },
       label: "opencode v2",
     });
   }
@@ -395,6 +395,7 @@ async function runDaemon(config: OatConfig): Promise<void> {
     version: OAT_VERSION,
     startedAt: Date.now(),
     token: config.token,
+    v2Password: config.v2Password,
   };
 
   // One discovery pass: enumerate listeners, probe, and update the registry.

@@ -28,6 +28,22 @@ test("state round-trips and clears", async () => {
   assert.equal(await readState(dir), null);
 });
 
+// The v2 backend password must persist so every CLI/daemon invocation agrees.
+test("state round-trips the v2 backend password", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "oat-state-v2-"));
+  await writeState(dir, {
+    pid: 1,
+    pidStartMarker: null,
+    port: 4096,
+    host: "127.0.0.1",
+    version: "0.2.0",
+    startedAt: 1,
+    token: "t",
+    v2Password: "shared-secret",
+  });
+  assert.equal((await readState(dir))?.v2Password, "shared-secret");
+});
+
 // The current process must always be reported alive.
 test("isProcessAlive is true for this process", () => {
   assert.equal(isProcessAlive(process.pid), true);
