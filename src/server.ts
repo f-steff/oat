@@ -40,8 +40,6 @@ export interface ControlHandlers {
   stop(): Promise<void>;
   /** Ask the daemon to re-scan for backends. */
   reload(): Promise<void>;
-  /** Record that a project directory is served by the v2 shared service. */
-  registerLocation?(directory: string): void;
 }
 
 /** The subset of the backend supervisor the mux server needs. */
@@ -606,19 +604,6 @@ async function handleControl(
   }
   if (route === "/reload") {
     await deps.control.reload();
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-  if (route === "/register-location") {
-    // Record that a project is served by the v2 shared service (best-effort body).
-    let directory = "";
-    try {
-      const parsed = JSON.parse((await readBody(req)).toString("utf8")) as { directory?: unknown };
-      if (typeof parsed.directory === "string") directory = parsed.directory;
-    } catch {
-      // Ignore malformed bodies.
-    }
-    if (directory) deps.control.registerLocation?.(directory);
     sendJson(res, 200, { ok: true });
     return;
   }

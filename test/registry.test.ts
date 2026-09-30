@@ -18,34 +18,17 @@ function backend(over: Partial<Backend>): Backend {
   };
 }
 
-test("registerLocation adds per-project rows for the shared service", () => {
+test("registry.list returns only real discovered/managed backends (no synthetic project rows)", () => {
   const registry = new Registry();
   registry.set([backend({ port: 5000, shared: true, primaryDirectory: "C:/Users/x" })]);
-  registry.registerLocation("C:/Projects/a");
-  registry.registerLocation("C:/Projects/b");
+  registry.addManaged(backend({ port: 6000, primaryDirectory: "C:/Projects/a" }));
 
-  const rows = registry.list().filter((b) => b.location);
-  assert.equal(rows.length, 2);
   assert.deepEqual(
-    rows.map((row) => row.primaryDirectory).sort(),
-    ["C:/Projects/a", "C:/Projects/b"],
+    registry.list()
+      .map((b) => b.port)
+      .sort(),
+    [5000, 6000],
   );
-  assert.ok(rows.every((row) => row.port === 5000 && row.shared === true));
-});
-
-test("registerLocation does not duplicate a directory owned by a real backend", () => {
-  const registry = new Registry();
-  registry.set([
-    backend({ port: 5000, shared: true, primaryDirectory: "C:/Users/x" }),
-    backend({ port: 6000, primaryDirectory: "C:/Projects/a" }),
-  ]);
-  registry.registerLocation("C:/Projects/a");
-  assert.equal(registry.list().filter((b) => b.location).length, 0);
-});
-
-test("registerLocation is a no-op without a discovered shared service", () => {
-  const registry = new Registry();
-  registry.set([backend({ port: 6000, primaryDirectory: "C:/Projects/a" })]);
-  registry.registerLocation("C:/Projects/b");
-  assert.equal(registry.list().filter((b) => b.location).length, 0);
+  // The v2 shared service appears exactly once, regardless of how many projects exist.
+  assert.equal(registry.list().filter((b) => b.port === 5000).length, 1);
 });

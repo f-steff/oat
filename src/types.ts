@@ -38,8 +38,6 @@ export interface Backend {
   anchor?: boolean;
   /** True for the v2 shared background service (discovered via `service.json`). */
   shared?: boolean;
-  /** True for a synthesized row for a project served by the shared service. */
-  location?: boolean;
   /** Protocol generation (`"v2"` requires Basic auth and `/api/*` translation). */
   kind?: BackendKind;
   /** Password for v2 HTTP Basic auth, when OAT knows it (managed/`OAT_V2_PASSWORD`). */

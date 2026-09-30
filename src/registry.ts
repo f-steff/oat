@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 
-import { normalizeDir } from "./router.js";
 import type { Backend } from "./types.js";
 
 /**
@@ -16,40 +15,10 @@ export class Registry extends EventEmitter {
   private managed = new Map<number, Backend>();
   /** session id → backend port, so duplicate-directory sessions stay sticky (Q5). */
   private affinity = new Map<string, number>();
-  /** Normalized project directory → original path, served by the v2 shared service. */
-  private locationDirs = new Map<string, string>();
 
-  /** Return the union of discovered, managed and shared-service location rows. */
+  /** Return the union of discovered and managed backends. */
   list(): Backend[] {
-    const base = [...this.discovered, ...this.managed.values()];
-    return [...base, ...this.locationRows(base)];
-  }
-
-  /** Remember that `directory` is served by the v2 shared service. */
-  registerLocation(directory: string): void {
-    const key = normalizeDir(directory);
-    if (this.locationDirs.get(key) === directory) return;
-    this.locationDirs.set(key, directory);
-    this.emit("change", this.list());
-  }
-
-  /** Project directories registered against the shared service (original casing). */
-  locations(): string[] {
-    return [...this.locationDirs.values()];
-  }
-
-  /** One synthesized row per registered project, pointing at the shared service. */
-  private locationRows(base: Backend[]): Backend[] {
-    if (this.locationDirs.size === 0) return [];
-    const service = base.find((backend) => backend.shared && backend.healthy);
-    if (!service) return [];
-    const rows: Backend[] = [];
-    for (const [key, directory] of this.locationDirs) {
-      // Skip when a real (discovered/managed) backend already owns that directory.
-      if (base.some((backend) => backend.primaryDirectory && normalizeDir(backend.primaryDirectory) === key)) continue;
-      rows.push({ ...service, primaryDirectory: directory, location: true });
-    }
-    return rows;
+    return [...this.discovered, ...this.managed.values()];
   }
 
   /** Replace the discovered backend set and notify listeners. */
