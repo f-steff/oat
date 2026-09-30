@@ -259,25 +259,17 @@ async function simpleCommand(config: OatConfig, route: string, okMessage: string
  */
 async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<number> {
   // Ensure the daemon is up so it can discover and route this instance.
-  const state = await ensureDaemon(config);
+  await ensureDaemon(config);
   const directory = process.cwd();
   const { command, shell } = resolveOpencodeExecutable(config.opencodeBin);
   const generation = resolveGeneration(config.backendVersion, command);
 
   if (generation === "v2") {
-    // v2's TUI has no port flag; run a private server and export the password so
-    // OAT can discover and authenticate to it.
-    const targeted = opencodeArgs.some(
-      (arg) => arg === "--standalone" || arg === "--server" || arg.startsWith("--server="),
-    );
-    const args = targeted ? opencodeArgs : ["--standalone", ...opencodeArgs];
+    // v2's default mode uses the shared background service, whose url + password are
+    // registered in service.json, which OAT discovers. (A private `--standalone`
+    // server uses a random password OAT cannot learn; pass it explicitly for that.)
     console.log(`oat: starting opencode v2 in this terminal (${directory})`);
-    return spawnForeground(command, args, {
-      cwd: directory,
-      shell,
-      env: { ...process.env, OPENCODE_SERVER_PASSWORD: state.v2Password ?? config.v2Password },
-      label: "opencode v2",
-    });
+    return spawnForeground(command, opencodeArgs, { cwd: directory, shell, label: "opencode v2" });
   }
 
   // v1: an embedded server only appears with a network flag, so inject a free
