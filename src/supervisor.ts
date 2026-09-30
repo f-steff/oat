@@ -235,6 +235,10 @@ export class BackendSupervisor {
    * Concurrent callers for the same directory share a single spawn.
    */
   async ensure(directory: string, sessionId?: string): Promise<Backend | null> {
+    // v2's shared service already covers every project; never spawn per-project.
+    if (this.kind === "v2") {
+      return this.registry.list().find((backend) => backend.shared && backend.healthy) ?? null;
+    }
     const normalized = normalizeDir(directory);
     // Reuse an existing (discovered or managed) backend for this directory.
     const existing = this.registry
@@ -335,6 +339,10 @@ export class BackendSupervisor {
    * idle-shut while the daemon runs.
    */
   async ensureAnchor(): Promise<Backend | null> {
+    // v2's shared service already answers reads for all locations; no anchor process.
+    if (this.kind === "v2") {
+      return this.registry.list().find((backend) => backend.shared && backend.healthy) ?? null;
+    }
     // Reuse the anchor if it is still registered and healthy.
     if (this.anchorPort != null) {
       const existing = this.registry.get(this.anchorPort);
