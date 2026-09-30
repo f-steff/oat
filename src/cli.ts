@@ -123,12 +123,19 @@ function renderBackends(body: unknown, json: boolean): void {
     console.log("(no opencode instances)");
     return;
   }
+  // When per-project rows exist, hide the bare shared-service row (same port).
+  const hasLocations = list.some((backend) => backend.location);
+  const shown = hasLocations ? list.filter((backend) => !(backend.shared && !backend.location)) : list;
   printTable(
     ["PORT", "PID", "DIRECTORY", "KIND", "VERSION", "HEALTHY"],
-    list.map((backend) => [
+    shown.map((backend) => [
       String(backend.port),
       String(backend.pid ?? ""),
-      backend.anchor ? "(maintenance worker)" : backend.primaryDirectory ?? "",
+      backend.anchor
+        ? "(maintenance worker)"
+        : backend.shared && !backend.location
+          ? "(v2 shared service)"
+          : backend.primaryDirectory ?? "",
       backend.kind ?? "v1",
       String(backend.version ?? ""),
       backend.healthy ? "yes" : "no",
@@ -259,7 +266,7 @@ async function simpleCommand(config: OatConfig, route: string, okMessage: string
  */
 async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<number> {
   // Ensure the daemon is up so it can discover and route this instance.
-  await ensureDaemon(config);
+  const state = await ensureDaemon(config);
   const directory = process.cwd();
   const { command, shell } = resolveOpencodeExecutable(config.opencodeBin);
   const generation = resolveGeneration(config.backendVersion, command);
@@ -268,6 +275,12 @@ async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<n
     // v2's default mode uses the shared background service, whose url + password are
     // registered in service.json, which OAT discovers. (A private `--standalone`
     // server uses a random password OAT cannot learn; pass it explicitly for that.)
+    // Register this project so `oat list` shows a row for it once the service is up.
+    try {
+      await callControl(baseUrl(config.host, config.port), state.token, "/register-location", "POST", { directory });
+    } catch {
+      // Best-effort; the row appears once the service is discovered.
+    }
     console.log(`oat: starting opencode v2 in this terminal (${directory})`);
     return spawnForeground(command, opencodeArgs, { cwd: directory, shell, label: "opencode v2" });
   }
@@ -375,6 +388,21 @@ async function runDaemon(config: OatConfig): Promise<void> {
   );
 
   const registry = new Registry();
+  // Restore per-project rows for the v2 shared service, if any were registered.
+  const locationsFile = path.join(config.stateDir, "locations.json");
+  try {
+    const saved = JSON.parse(await fs.promises.readFile(locationsFile, "utf8")) as unknown;
+    if (Array.isArray(saved)) for (const dir of saved) if (typeof dir === "string") registry.registerLocation(dir);
+  } catch {
+    // No registrations yet.
+  }
+  const saveLocations = async (): Promise<void> => {
+    try {
+      await fs.promises.writeFile(locationsFile, JSON.stringify(registry.locations(), null, 2), "utf8");
+    } catch {
+      // Best-effort.
+    }
+  };
   // Probe v1 (`/global/health`) then v2 (`/api/info`, Basic) with the known password.
   const probe = makeHttpProbe(config.probeTimeoutMs, { v2Password: config.v2Password, v1Password: config.v1Password });
   // Which opencode generation OAT will start for projects ("auto" detects the binary).
@@ -412,7 +440,8 @@ async function runDaemon(config: OatConfig): Promise<void> {
       if (service) {
         const extra = await probeV2Endpoint(service.url, service.password, config.probeTimeoutMs);
         if (extra && extra.port && !skipPorts.has(extra.port) && !backends.some((b) => b.port === extra.port)) {
-          backends.push(extra);
+          // Mark it so `oat list` can label it and expand per-project rows.
+          backends.push({ ...extra, shared: true });
         }
       }
       registry.set(backends);
@@ -476,6 +505,10 @@ async function runDaemon(config: OatConfig): Promise<void> {
       backends: registry.list().length,
     }),
     list: () => registry.list(),
+    registerLocation: (directory: string) => {
+      registry.registerLocation(directory);
+      void saveLocations();
+    },
     reload: scan,
     stop: shutdown,
   };
