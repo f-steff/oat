@@ -128,6 +128,9 @@ recover older sessions from the DB if needed — see README → *Migrating from 
   `interrupt`, `/path` → `/api/location`, etc. — passes `x-opencode-directory` as the `directory` query,
   unwraps v2's `{data}` envelopes, and answers a v1 `noReply` "reserve" locally (v2 has no reserve and
   would otherwise double-admit the user message). v2 `/api/event` is fanned in like v1 `/global/event`.
+  Translation is **per-request**: only v1 paths are translated; `/api/*` passes straight through, so a
+  v2-native client (which probes `/api/info`) needs no translation, and both client shapes can share one
+  v2 backend.
 - **Status** (`cli.ts`): `oat status` reports the daemon's generation; `oat list` shows each backend's
   `KIND`.
 

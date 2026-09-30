@@ -103,8 +103,10 @@ oat sesori-bridge             # the bridge reaches them through OAT
   v1 opens a visible terminal; v2 starts a hidden `opencode serve` with an OAT-chosen
   `OPENCODE_SERVER_PASSWORD`.
 - **`oat status`** reports the generation; **`oat list`** shows each backend's `KIND`.
-- **Translation** (`OAT_TRANSLATE_V2`, on by default) maps the bridge's v1 requests onto v2 `/api/*` and
-  translates v2 responses/events back to v1 shapes; set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
+- **Translation** (`OAT_TRANSLATE_V2`, on by default): **v1-path** requests are mapped onto v2 `/api/*` and
+  their responses translated back to v1 shapes, while **`/api/*` requests always pass straight through** —
+  so a v1-shaped client and a v2-native client (which probes `/api/info`) both work against the same v2
+  backend.
 
 The v2 path is newer and less battle-tested than v1; see Known limitations.
 
@@ -126,7 +128,7 @@ The v2 path is newer and less battle-tested than v1; see Known limitations.
 | `OAT_BACKEND_VERSION` | `auto` | Generation OAT uses (`auto` detects the installed `opencode`; `v1`/`v2` force it) |
 | `OAT_V2_PASSWORD` | generated per daemon | Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 servers |
 | `OAT_V1_PASSWORD` | `OPENCODE_SERVER_PASSWORD` | Password for password-protected v1 servers (Basic auth) |
-| `OAT_TRANSLATE_V2` | `1` | Translate v1<->v2 for the bridge (`0` disables) |
+| `OAT_TRANSLATE_V2` | `1` | Translate **v1-path** requests to v2 backends; `/api/*` always passes through (`0` disables) |
 | `OAT_MAX_INSTANCES` | `32` | Safety cap on concurrently running OAT-started instances |
 | `OAT_SPAWNS_PER_MINUTE` | `6` | Burst guard: max new instances started per rolling minute |
 | `OAT_STATE_DIR` | per-OS | Where state/logs live |

@@ -437,8 +437,11 @@ async function handleProxy(
   if (sessionId) deps.registry.setAffinity(sessionId, backend.port);
   log.debug(`route ${req.method} ${url.pathname} dir=${directory ?? "-"} -> ${backend.port} (${decision.reason})`);
 
-  // v2 backends speak `/api/*` + Basic auth; translate the v1 surface when enabled.
-  if (backend.kind === "v2" && deps.config.translateV2) {
+  // v2 backends speak `/api/*` + Basic auth. A v2 client (already calling `/api/*`)
+  // is passed straight through; a v1 client (v1 paths) is translated. Set
+  // `OAT_TRANSLATE_V2=0` to force passthrough for everything.
+  const v2Client = url.pathname === "/api" || url.pathname.startsWith("/api/");
+  if (backend.kind === "v2" && deps.config.translateV2 && !v2Client) {
     await handleTranslatedProxy(req, res, url, backend, deps.config.debugAttribution);
     return;
   }
