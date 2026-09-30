@@ -36,6 +36,7 @@ test("mapV1PathToV2 maps the bridge's core routes", () => {
   assert.equal(mapV1PathToV2("/provider"), "/api/provider");
   assert.equal(mapV1PathToV2("/agent"), "/api/agent");
   assert.equal(mapV1PathToV2("/command"), "/api/command");
+  assert.equal(mapV1PathToV2("/permission"), "/api/permission/request");
   assert.equal(mapV1PathToV2("/experimental/session"), "/api/session");
   assert.equal(mapV1PathToV2("/project/current"), "/api/location");
   assert.equal(mapV1PathToV2("/experimental/worktree"), "/api/worktree");
@@ -171,6 +172,22 @@ test("translateV2Response maps v2 projects to v1 Project (worktree/name/sandboxe
   const current = translateV2Response("/project/current", fixture("location.json")) as Record<string, unknown>;
   assert.equal(current.worktree, "/");
   assert.equal(current.canonical, undefined);
+});
+
+test("translateV2Response maps v2 permission requests to v1 PermissionRequest", () => {
+  const out = translateV2Response("/permission", {
+    location: {},
+    data: [{ id: "per_1", sessionID: "ses_1", action: "bash", resources: ["*"], save: ["bash"] }],
+  }) as Array<Record<string, unknown>>;
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0], {
+    id: "per_1",
+    sessionID: "ses_1",
+    permission: "bash",
+    patterns: ["*"],
+    metadata: {},
+    always: ["bash"],
+  });
 });
 
 test("translateV2Response gives commands `hints` and agents `permission`/`options` (fixtures)", () => {

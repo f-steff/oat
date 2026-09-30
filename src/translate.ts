@@ -65,6 +65,9 @@ export function mapV1PathToV2(pathname: string, method = "GET"): string | null {
       return "/api/command";
     case "/agent":
       return "/api/agent";
+    // v1's pending-permission list; v2 exposes the same as `/api/permission/request`.
+    case "/permission":
+      return "/api/permission/request";
     default:
       break;
   }
@@ -199,6 +202,24 @@ export function translateV2Command(value: unknown): unknown {
 }
 
 /**
+ * v2 `Permission.Request` -> v1 `PermissionRequest`: v2 names the permission
+ * `action` with `resources`/`save` lists, where v1 expects `permission`,
+ * `patterns` and `always` (all required, non-null).
+ */
+export function translateV2PermissionRequest(value: unknown): unknown {
+  const request = asRecord(value);
+  if (!request) return value;
+  return {
+    id: request.id,
+    sessionID: request.sessionID,
+    permission: request.permission ?? request.action ?? "*",
+    patterns: Array.isArray(request.patterns) ? request.patterns : Array.isArray(request.resources) ? request.resources : [],
+    metadata: asRecord(request.metadata) ?? {},
+    always: Array.isArray(request.always) ? request.always : Array.isArray(request.save) ? request.save : [],
+  };
+}
+
+/**
  * v2 `Agent` -> v1 `Agent`: v2 sends `permissions` as `{action, resource,
  * effect}` where v1 expects `permission` as `{permission, pattern, action}`, and
  * v1 requires non-null `options`. `system` maps to the v1 `prompt`.
@@ -330,6 +351,7 @@ export function translateV2Response(v1Path: string, body: unknown, directory?: s
   // Commands and agents need their v1-required fields synthesized.
   if (v1Path === "/command" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Command);
   if (v1Path === "/agent" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Agent);
+  if (v1Path === "/permission" && Array.isArray(unwrapped)) return unwrapped.map(translateV2PermissionRequest);
   // Message lists: v2 returns newest-first and v1 expects oldest-first, so order
   // by creation time while reshaping to `{ info, parts }[]`, linking each
   // assistant to the user before it and dropping the `idle` marker.

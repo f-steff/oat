@@ -226,7 +226,9 @@ function handleSse(req: http.IncomingMessage, res: http.ServerResponse, deps: Mu
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  res.write(": oat ready\n\n");
+  // Prime the stream with a v1-shaped `server.connected` so the client has a valid
+  // envelope immediately (a bare `: comment` makes some clients warn/skip).
+  res.write('data: {"type":"server.connected","properties":{}}\n\n');
 
   const merger = new SseMerger({ collapseServerConnected: true });
   const controllers = new Map<number, AbortController>();
@@ -333,6 +335,13 @@ async function handleTranslatedProxy(
   // A v1 "reserve" has no v2 equivalent and would double-admit the user message.
   if (body !== undefined && isReserve(body)) {
     sendJson(res, 200, synthesizeReservedMessage(extractSessionId(url.pathname) ?? "", body));
+    return;
+  }
+  // v1 `/question` (pending user questions) has no v2 model equivalent — v2 uses
+  // session forms with a different shape and reply route. Answer an empty list so
+  // cold start settles instead of falling through to the v2 web UI (SPA HTML).
+  if (url.pathname === "/question") {
+    sendJson(res, 200, []);
     return;
   }
   const translated = translateRequest(req.method ?? "GET", url.pathname, url.search, body, directory);
