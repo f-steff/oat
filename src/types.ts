@@ -91,7 +91,10 @@ export interface OatConfig {
   opencodeArgs: string;
   /** Password OAT sets as `OPENCODE_SERVER_PASSWORD` for v2 backends (HTTP Basic). */
   v2Password: string;
-  /** When true, translate v1<->v2 for the bridge; `OAT_TRANSLATE_V2=0` disables it. */
+  /**
+   * When true, translate the v2 backend into the v1 shape a v1 bridge expects;
+   * `OAT_TRANSLATE_V2_TO_V1_BRIDGE=0` disables it. `/api/*` always passes through.
+   */
   translateV2: boolean;
   /** Generation OAT uses for projects (`auto` detects the installed `opencode` binary). */
   backendVersion: BackendKind | "auto";

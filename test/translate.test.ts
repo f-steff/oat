@@ -23,7 +23,8 @@ function fixture(name: string): unknown {
 test("mapV1PathToV2 maps the bridge's core routes", () => {
   assert.equal(mapV1PathToV2("/session"), "/api/session");
   assert.equal(mapV1PathToV2("/session/ses_1"), "/api/session/ses_1");
-  assert.equal(mapV1PathToV2("/session/ses_1/message"), "/api/session/ses_1/prompt");
+  assert.equal(mapV1PathToV2("/session/ses_1/message"), "/api/session/ses_1/message");
+  assert.equal(mapV1PathToV2("/session/ses_1/message", "POST"), "/api/session/ses_1/prompt");
   assert.equal(mapV1PathToV2("/session/ses_1/prompt_async"), "/api/session/ses_1/prompt");
   assert.equal(mapV1PathToV2("/session/ses_1/command"), "/api/session/ses_1/command");
   assert.equal(mapV1PathToV2("/session/ses_1/shell"), "/api/session/ses_1/shell");
@@ -35,6 +36,9 @@ test("mapV1PathToV2 maps the bridge's core routes", () => {
   assert.equal(mapV1PathToV2("/provider"), "/api/provider");
   assert.equal(mapV1PathToV2("/agent"), "/api/agent");
   assert.equal(mapV1PathToV2("/command"), "/api/command");
+  assert.equal(mapV1PathToV2("/experimental/session"), "/api/session");
+  assert.equal(mapV1PathToV2("/project/current"), "/api/location");
+  assert.equal(mapV1PathToV2("/experimental/worktree"), "/api/worktree");
   // Unknown routes have no mapping.
   assert.equal(mapV1PathToV2("/global/event"), null);
 });
@@ -110,10 +114,24 @@ test("translateV2Response maps v2 session reads to v1 shapes (fixtures)", () => 
   assert.equal(list[0]?.directory, "/");
   assert.equal(list[0]?.location, undefined);
   assert.equal(list[0]?.title, "fixture");
+  // v1 `slug` is required and absent from v2; it mirrors the id.
+  assert.equal(list[0]?.slug, list[0]?.id);
 
   const single = translateV2Response("/session/ses_x", fixture("session-create.json")) as Record<string, unknown>;
   assert.equal(single.directory, "/");
   assert.match(String(single.id), /^ses_/);
+
+  // The global session list (`/experimental/session`) maps to the same shape.
+  const globalList = translateV2Response("/experimental/session", fixture("session-list.json")) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(globalList[0]?.directory, "/");
+  assert.equal(globalList[0]?.slug, globalList[0]?.id);
+});
+
+test("translateV2Message drops messages with no v1 equivalent (idle/system)", () => {
+  assert.equal(translateV2Message({ id: "m", type: "idle" }), null);
+  assert.equal(translateV2Message({ id: "m", type: "system", text: "x" }), null);
 });
 
 test("translateV2Response maps v2 messages to v1 {info,parts} and drops idle (fixtures)", () => {
@@ -122,10 +140,11 @@ test("translateV2Response maps v2 messages to v1 {info,parts} and drops idle (fi
     fixture("session-messages.json"),
   ) as Array<{ info: Record<string, unknown>; parts: Array<Record<string, unknown>> }>;
   assert.equal(messages.length, 2); // user + assistant; idle marker dropped
-  const [assistant, user] = messages;
+  const [user, assistant] = messages;
   assert.equal(user?.info.role, "user");
   assert.equal(user?.parts[0]?.text, "Reply with exactly: OK");
   assert.equal(assistant?.info.role, "assistant");
+  assert.equal(assistant?.info.parentID, user?.info.id);
   const texts = assistant?.parts.filter((p) => p.type === "text").map((p) => p.text);
   assert.deepEqual(texts, ["OK"]);
 });
@@ -138,6 +157,36 @@ test("translateV2Response maps v2 providers to v1 /provider and /config/provider
   const config = translateV2Response("/config/providers", fixture("provider.json")) as Record<string, unknown>;
   assert.equal(Array.isArray(config.providers), true);
   assert.deepEqual(config.default, {});
+});
+
+test("translateV2Response maps v2 projects to v1 Project (worktree/name/sandboxes)", () => {
+  const list = translateV2Response("/project", fixture("project.json")) as Array<Record<string, unknown>>;
+  assert.equal(list.length, 1);
+  assert.equal(list[0]?.worktree, "/");
+  assert.equal(list[0]?.canonical, undefined);
+  assert.equal(typeof list[0]?.name, "string");
+  assert.deepEqual(list[0]?.sandboxes, []);
+
+  // `/project/current` is served from the `/api/location` response.
+  const current = translateV2Response("/project/current", fixture("location.json")) as Record<string, unknown>;
+  assert.equal(current.worktree, "/");
+  assert.equal(current.canonical, undefined);
+});
+
+test("translateV2Response gives commands `hints` and agents `permission`/`options` (fixtures)", () => {
+  const commands = translateV2Response("/command", fixture("command.json")) as Array<Record<string, unknown>>;
+  assert.equal(commands.length, 2);
+  for (const command of commands) assert.deepEqual(command.hints, []);
+
+  const agents = translateV2Response("/agent", fixture("agent.json")) as Array<Record<string, unknown>>;
+  assert.ok(agents.length >= 1);
+  const build = agents[0] ?? {};
+  assert.deepEqual(build.options, {});
+  assert.equal(build.permissions, undefined);
+  assert.equal(build.request, undefined);
+  const rules = build.permission as Array<Record<string, unknown>>;
+  assert.deepEqual(rules[0], { permission: "*", pattern: "*", action: "allow" });
+  assert.deepEqual(rules[2], { permission: "read", pattern: "*.env", action: "ask" });
 });
 
 /** Parse the captured `/api/event` stream into raw v2 event objects. */

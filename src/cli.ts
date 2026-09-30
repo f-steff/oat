@@ -595,7 +595,7 @@ const USAGE = ((): string => {
     "  OAT_STATE_DIR              where state/logs live (default per-OS)",
     "  OPENCODE_BIN               opencode executable to run (default `opencode`)",
     "  OAT_BACKEND_VERSION        auto | v1 | v2 (default auto: detect the installed opencode)",
-    "  OAT_TRANSLATE_V2           1 = translate v1-path requests to v2 (default 1); /api/* always passes through",
+    "  OAT_TRANSLATE_V2_TO_V1_BRIDGE  translate the v2 backend into the v1 shape a v1 bridge expects (default 1); /api/* always passes through",
     "  OAT_V2_PASSWORD            password OAT sets on v2 backends (default: persisted random)",
     "  OAT_V1_PASSWORD            password for a v1 server protected with OPENCODE_SERVER_PASSWORD",
     "  OAT_LAUNCH_TERMINAL        1 = visible terminal for lazy starts; 0 = hidden server (default 1)",

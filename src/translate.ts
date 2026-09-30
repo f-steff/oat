@@ -2,11 +2,12 @@
  * Minimal, toggleable v1 <-> v2 translation for the bridge.
  *
  * The Sesori bridge speaks opencode's v1 HTTP surface; an opencode v2 backend
- * speaks `/api/*` with HTTP Basic auth. When `OAT_TRANSLATE_V2` is on, OAT maps
- * the v1 requests the bridge makes onto their v2 equivalents and unwraps v2
- * responses back into v1 shapes. This is a stopgap so a v1 client can drive a v2
- * backend; it is intentionally partial and can be disabled once the bridge
- * speaks v2 natively.
+ * speaks `/api/*` with HTTP Basic auth. When `OAT_TRANSLATE_V2_TO_V1_BRIDGE` is
+ * on, OAT maps the v1 requests the bridge makes onto their v2 equivalents and
+ * reshapes v2 responses back into the v1 models the bridge decodes. This is a
+ * stopgap so a v1 client can drive a v2 backend; it is intentionally partial and
+ * is skipped entirely for `/api/*` clients (a v2-native bridge speaks v2
+ * directly).
  */
 
 /** A translated upstream request. */
@@ -30,9 +31,11 @@ const SESSION = /^\/session\/([^/]+)$/;
 
 /**
  * Map a v1 path to its v2 `/api/...` equivalent, or `null` when there is no
- * known mapping (the caller then forwards the path unchanged).
+ * known mapping (the caller then forwards the path unchanged). `method`
+ * disambiguates the few paths whose meaning is verb-dependent (v1 reads and
+ * writes a session's messages on the same `/session/:id/message` path).
  */
-export function mapV1PathToV2(pathname: string): string | null {
+export function mapV1PathToV2(pathname: string, method = "GET"): string | null {
   // Fixed top-level resources.
   switch (pathname) {
     case "/session":
@@ -43,8 +46,18 @@ export function mapV1PathToV2(pathname: string): string | null {
       return "/api/session/active";
     case "/project":
       return "/api/project";
+    // The bridge reads the current project from `/project/current`; v2 exposes
+    // it (wrapped in the location) from `/api/location`.
+    case "/project/current":
+      return "/api/location";
     case "/path":
       return "/api/location";
+    // v1 lists every root session from `/experimental/session`; v2 has no such
+    // route, but `/api/session` is the same collection.
+    case "/experimental/session":
+      return "/api/session";
+    case "/experimental/worktree":
+      return "/api/worktree";
     case "/provider":
     case "/config/providers":
       return "/api/provider";
@@ -57,13 +70,21 @@ export function mapV1PathToV2(pathname: string): string | null {
   }
   // Session sub-resources (a prompt/command/shell/abort against a session).
   const message = SESSION_MESSAGE.exec(pathname);
-  if (message) return `/api/session/${message[1]}/prompt`;
+  if (message) {
+    // `GET /session/:id/message` lists messages; `POST` sends a prompt.
+    if (message[2] === "message" && (method === "GET" || method === "HEAD")) {
+      return `/api/session/${message[1]}/message`;
+    }
+    return `/api/session/${message[1]}/prompt`;
+  }
   const sub = SESSION_SUBRESOURCE.exec(pathname);
   if (sub) {
     const verb = sub[2] === "abort" ? "interrupt" : sub[2] === "summarize" ? "compact" : sub[2];
     return `/api/session/${sub[1]}/${verb}`;
   }
   if (SESSION.test(pathname)) return `/api${pathname}`;
+  // A single message (and its parts) keeps its shape under `/api`.
+  if (/^\/session\/[^/]+\/message\//.test(pathname)) return `/api${pathname}`;
   // Experimental routes keep their name under `/api`.
   if (pathname.startsWith("/experimental/")) return `/api${pathname}`;
   return null;
@@ -130,62 +151,158 @@ export function translateV2Session(value: unknown): unknown {
   const out: Record<string, unknown> = { ...session };
   delete out.location;
   if (typeof location?.directory === "string") out.directory = location.directory;
+  // v1 `Session.slug` is required (non-null); v2 drops it, so mirror the id.
+  if (typeof out.slug !== "string" && typeof out.id === "string") out.slug = out.id;
+  return out;
+}
+
+/** The trailing path segment, for a POSIX or Windows path. */
+function baseName(value: string): string {
+  const trimmed = value.replace(/[\\/]+$/, "");
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || value;
+}
+
+/**
+ * v2 `Project` -> v1 `Project`: v2 calls the root `canonical` where v1 expects
+ * `worktree`. v1 also requires a non-null `sandboxes` list and a `name`.
+ */
+export function translateV2Project(value: unknown): unknown {
+  const project = asRecord(value);
+  if (!project) return value;
+  const out: Record<string, unknown> = { ...project };
+  const worktree =
+    typeof project.worktree === "string"
+      ? project.worktree
+      : typeof project.canonical === "string"
+        ? project.canonical
+        : undefined;
+  delete out.canonical;
+  if (worktree !== undefined) {
+    out.worktree = worktree;
+    if (out.name === undefined || out.name === null) out.name = baseName(worktree);
+  }
+  if (!Array.isArray(out.sandboxes)) out.sandboxes = [];
+  return out;
+}
+
+/**
+ * v2 `Command` -> v1 `Command`: v1 requires a non-null `hints` string list that
+ * v2 omits.
+ */
+export function translateV2Command(value: unknown): unknown {
+  const command = asRecord(value);
+  if (!command) return value;
+  const out: Record<string, unknown> = { ...command };
+  if (!Array.isArray(out.hints)) out.hints = [];
+  return out;
+}
+
+/**
+ * v2 `Agent` -> v1 `Agent`: v2 sends `permissions` as `{action, resource,
+ * effect}` where v1 expects `permission` as `{permission, pattern, action}`, and
+ * v1 requires non-null `options`. `system` maps to the v1 `prompt`.
+ */
+export function translateV2Agent(value: unknown): unknown {
+  const agent = asRecord(value);
+  if (!agent) return value;
+  const out: Record<string, unknown> = { ...agent };
+  const permissions = Array.isArray(agent.permissions) ? agent.permissions : [];
+  out.permission = permissions.map((entry) => {
+    const rule = asRecord(entry) ?? {};
+    return {
+      permission: rule.permission ?? rule.action ?? "*",
+      pattern: rule.pattern ?? rule.resource ?? "*",
+      action: rule.effect ?? "allow",
+    };
+  });
+  if (!asRecord(out.options)) out.options = {};
+  if (out.prompt === undefined && typeof agent.system === "string") out.prompt = agent.system;
+  delete out.permissions;
+  delete out.system;
+  delete out.request;
   return out;
 }
 
 /**
  * v2 message (`user` / `assistant` with a `content[]` array) -> v1 `{ info, parts }`.
- * The `idle` marker is not a real message and maps to `null`.
+ * v2 messages are minimal, so v1-required fields the bridge's models cast
+ * non-null (`agent`/`model` on users; `parentID`/`modelID`/`providerID`/`mode`/
+ * `path`/`cost`/`tokens` on assistants; `time` on reasoning parts) are filled in.
+ * Types with no v1 equivalent (the `idle` marker and v2's `system` turns) map to
+ * `null` and are dropped from the list.
  */
-export function translateV2Message(value: unknown, sessionID?: string): unknown {
+export function translateV2Message(
+  value: unknown,
+  sessionID?: string,
+  parentID?: string,
+  directory?: string | null,
+): unknown {
   const message = asRecord(value);
-  if (!message) return value;
+  if (!message) return null;
   const id = String(message.id ?? "");
   const time = asRecord(message.time) ?? {};
   const type = message.type;
-  if (type === "idle") return null;
+  const cwd = typeof directory === "string" ? directory : "";
+  if (type !== "user" && type !== "assistant") return null;
   if (type === "user") {
+    const agents = Array.isArray(message.agents) ? message.agents : [];
+    const agent = typeof agents[0] === "string" ? agents[0] : "build";
     return {
-      info: { id, sessionID, role: "user", time: { created: time.created } },
+      info: {
+        id,
+        sessionID,
+        role: "user",
+        time: { created: time.created },
+        agent,
+        model: { providerID: "opencode", modelID: "unknown" },
+      },
       parts: [{ id: `${id}_text`, messageID: id, sessionID, type: "text", text: message.text ?? "" }],
     };
   }
   if (type === "assistant") {
-    const model = asRecord(message.model);
+    const model = asRecord(message.model) ?? {};
     const content = Array.isArray(message.content) ? message.content : [];
     const parts = content.map((entry, index) => {
       const part = asRecord(entry) ?? {};
-      return {
-        id: `${id}_${index}`,
-        messageID: id,
-        sessionID,
-        type: part.type === "reasoning" ? "reasoning" : "text",
-        text: part.text ?? "",
-      };
+      const kind = part.type === "reasoning" ? "reasoning" : "text";
+      const base = { id: `${id}_${index}`, messageID: id, sessionID, type: kind, text: part.text ?? "" };
+      // v1 `ReasoningPart` requires a `{start, end}` range; text parts do not.
+      if (kind === "reasoning") {
+        const span = asRecord(part.time) ?? {};
+        return { ...base, time: { start: span.created ?? time.created, end: span.completed ?? time.completed } };
+      }
+      return base;
     });
+    const tokens = asRecord(message.tokens) ?? {};
     return {
       info: {
         id,
         sessionID,
         role: "assistant",
         time: { created: time.created, completed: time.completed },
-        modelID: model?.id,
-        providerID: model?.providerID,
-        cost: message.cost,
-        tokens: message.tokens,
+        parentID: parentID ?? "",
+        modelID: typeof model.id === "string" ? model.id : "",
+        providerID: typeof model.providerID === "string" ? model.providerID : "",
+        mode: "build",
+        agent: typeof message.agent === "string" ? message.agent : "build",
+        path: { cwd, root: cwd },
+        cost: typeof message.cost === "number" ? message.cost : 0,
+        tokens,
+        variant: model.variant,
         finish: message.finish,
       },
       parts,
     };
   }
-  return value;
+  return null;
 }
 
 /**
  * Translate an unwrapped v2 response body into the v1 shape expected for
  * `v1Path`. Unknown paths fall back to the plain `{ data }` unwrap.
  */
-export function translateV2Response(v1Path: string, body: unknown): unknown {
+export function translateV2Response(v1Path: string, body: unknown, directory?: string | null): unknown {
   const unwrapped = unwrapV2Response(body);
   // v2 `/api/provider` -> v1 `/provider` ({all, default, connected}).
   if (v1Path === "/provider" || v1Path === "/config/providers") {
@@ -198,13 +315,43 @@ export function translateV2Response(v1Path: string, body: unknown): unknown {
     return { all: list, default: {}, connected };
   }
   // Session lists and single sessions: lift `location.directory` to `directory`.
-  if (v1Path === "/session" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Session);
-  if (v1Path === "/session" && asRecord(unwrapped)) return translateV2Session(unwrapped);
+  // `/experimental/session` is v1's global session list (mapped to `/api/session`).
+  const sessionList = v1Path === "/session" || v1Path === "/experimental/session";
+  if (sessionList && Array.isArray(unwrapped)) return unwrapped.map(translateV2Session);
+  if (sessionList && asRecord(unwrapped)) return translateV2Session(unwrapped);
   if (/^\/session\/[^/]+$/.test(v1Path) && asRecord(unwrapped)) return translateV2Session(unwrapped);
-  // Message lists: reshape to `{ info, parts }[]`, dropping the `idle` marker.
+  // v2 project lists are bare arrays; `/project/current` reads the project out
+  // of the `/api/location` response.
+  if (v1Path === "/project" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Project);
+  if (v1Path === "/project/current") {
+    const project = asRecord(asRecord(unwrapped)?.project);
+    return project ? translateV2Project(project) : unwrapped;
+  }
+  // Commands and agents need their v1-required fields synthesized.
+  if (v1Path === "/command" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Command);
+  if (v1Path === "/agent" && Array.isArray(unwrapped)) return unwrapped.map(translateV2Agent);
+  // Message lists: v2 returns newest-first and v1 expects oldest-first, so order
+  // by creation time while reshaping to `{ info, parts }[]`, linking each
+  // assistant to the user before it and dropping the `idle` marker.
   if (/^\/session\/[^/]+\/message$/.test(v1Path) && Array.isArray(unwrapped)) {
     const sessionID = sessionIdOf(v1Path);
-    return unwrapped.map((message) => translateV2Message(message, sessionID)).filter((message) => message !== null);
+    const created = (value: unknown): number => {
+      const at = asRecord(asRecord(value)?.time)?.created;
+      return typeof at === "number" ? at : 0;
+    };
+    const ordered = [...unwrapped].sort((a, b) => created(a) - created(b));
+    const out: unknown[] = [];
+    let lastUserId = "";
+    for (const message of ordered) {
+      const record = asRecord(message);
+      if (record?.type === "user" && typeof record.id === "string") lastUserId = record.id;
+      const mapped = translateV2Message(message, sessionID, lastUserId, directory);
+      if (mapped !== null) out.push(mapped);
+    }
+    return out;
+  }
+  if (/^\/session\/[^/]+\/message\/[^/]+$/.test(v1Path) && asRecord(unwrapped)) {
+    return translateV2Message(unwrapped, sessionIdOf(v1Path), undefined, directory) ?? unwrapped;
   }
   return unwrapped;
 }
@@ -217,12 +364,15 @@ export function synthesizeReservedMessage(sessionId: string, body: unknown, now 
   const record = asRecord(body);
   const id = typeof record?.messageID === "string" ? record.messageID : `msg_oat_${now}`;
   const parts = Array.isArray(record?.parts) ? record.parts : [];
+  const agent = typeof record?.agent === "string" ? record.agent : "build";
   return {
     info: {
       id,
       sessionID: sessionId,
       role: "user",
       time: { created: now },
+      agent,
+      model: { providerID: "opencode", modelID: "unknown" },
     },
     parts: parts.map((part, index) => {
       const p = asRecord(part) ?? {};
@@ -361,7 +511,7 @@ export function translateRequest(
   body: unknown,
   directory: string | null,
 ): TranslatedRequest {
-  const mapped = mapV1PathToV2(pathname) ?? pathname;
+  const mapped = mapV1PathToV2(pathname, method) ?? pathname;
   // `x-opencode-directory` has no v2 header; pass it as the `directory` query.
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   if (directory && !params.has("directory")) params.set("directory", directory);

@@ -123,7 +123,7 @@ recover older sessions from the DB if needed — see README → *Migrating from 
   Lazily-started backends: v1 opens a visible terminal; v2 starts a hidden `opencode serve --port <n>`.
 - **Auth** (`server.ts`): the proxy and WebSocket replay add `Authorization: Basic` for any backend that
   carries a password (v2 always; v1 when `OPENCODE_SERVER_PASSWORD`/`OAT_V1_PASSWORD` is set).
-- **Translation** (`translate.ts`, `OAT_TRANSLATE_V2`): the bridge speaks v1, so OAT maps the v1 routes
+- **Translation** (`translate.ts`, `OAT_TRANSLATE_V2_TO_V1_BRIDGE`): the bridge speaks v1, so OAT maps the v1 routes
   it uses onto v2 — `/session/:id/{message,prompt_async}` → `/api/session/:id/prompt`, `abort` →
   `interrupt`, `/path` → `/api/location`, etc. — passes `x-opencode-directory` as the `directory` query,
   unwraps v2's `{data}` envelopes, and answers a v1 `noReply` "reserve" locally (v2 has no reserve and
@@ -134,7 +134,7 @@ recover older sessions from the DB if needed — see README → *Migrating from 
 - **Status** (`cli.ts`): `oat status` reports the daemon's generation; `oat list` shows each backend's
   `KIND`.
 
-This layer is deliberately partial and toggleable: set `OAT_TRANSLATE_V2=0` once the bridge speaks v2.
+This layer is deliberately partial and toggleable: set `OAT_TRANSLATE_V2_TO_V1_BRIDGE=0` once the bridge speaks v2.
 
 ## 4. Learnings (brief)
 

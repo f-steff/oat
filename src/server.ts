@@ -341,7 +341,7 @@ async function handleTranslatedProxy(
         let payload = raw;
         if (contentType.includes("application/json") && raw.length > 0) {
           try {
-            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")))));
+            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")), directory)));
           } catch {
             // Not JSON after all; return it unchanged.
           }
@@ -439,7 +439,7 @@ async function handleProxy(
 
   // v2 backends speak `/api/*` + Basic auth. A v2 client (already calling `/api/*`)
   // is passed straight through; a v1 client (v1 paths) is translated. Set
-  // `OAT_TRANSLATE_V2=0` to force passthrough for everything.
+  // `OAT_TRANSLATE_V2_TO_V1_BRIDGE=0` to force passthrough for everything.
   const v2Client = url.pathname === "/api" || url.pathname.startsWith("/api/");
   if (backend.kind === "v2" && deps.config.translateV2 && !v2Client) {
     await handleTranslatedProxy(req, res, url, backend, deps.config.debugAttribution);
