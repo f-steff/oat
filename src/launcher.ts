@@ -42,9 +42,11 @@ export function resolveOpencodeExecutable(bin: string): { command: string; shell
   if (bin.includes("/") || bin.includes("\\")) return { command: bin, shell: false };
   if (process.platform !== "win32") return { command: bin, shell: false };
   // Prefer the real .exe shipped with the npm package (no console window).
+  // `@opencode/cli` (v2) is preferred over `opencode-ai` (v1) so the active
+  // single-generation install wins even during a transition where both remain.
   const candidates = [
-    process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe") : "",
     process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "@opencode", "cli", "bin", "opencode.exe") : "",
+    process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe") : "",
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "opencode", "bin", "opencode.exe") : "",
   ];
   for (const candidate of candidates) {
