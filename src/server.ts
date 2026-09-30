@@ -1,5 +1,6 @@
 import http from "node:http";
 import net from "node:net";
+import zlib from "node:zlib";
 import type { Duplex } from "node:stream";
 
 import { log } from "./logger.js";
@@ -297,6 +298,18 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+/** Decode an upstream body when it arrives compressed (gzip/deflate/br). */
+function decodeUpstream(raw: Buffer, encoding: string): Buffer {
+  try {
+    if (encoding.includes("gzip")) return zlib.gunzipSync(raw);
+    if (encoding.includes("deflate")) return zlib.inflateSync(raw);
+    if (encoding.includes("br")) return zlib.brotliDecompressSync(raw);
+  } catch {
+    // Fall through: return the bytes as-is.
+  }
+  return raw;
+}
+
 /** Translate a v1 request to a v2 backend and return a v1-shaped response. */
 async function handleTranslatedProxy(
   req: http.IncomingMessage,
@@ -328,6 +341,10 @@ async function handleTranslatedProxy(
   delete headers["authorization"];
   delete headers["content-length"];
   delete headers["x-opencode-directory"];
+  // We must parse the upstream JSON to translate it, so ask for it uncompressed.
+  // (The bridge's HTTP client sends `Accept-Encoding: gzip`, which would otherwise
+  // come back compressed and force the translation below to silently no-op.)
+  delete headers["accept-encoding"];
   if (backend.password) headers["authorization"] = basicAuth(backend.password);
   if (translated.body !== undefined) headers["content-type"] = "application/json";
   const upstream = http.request(
@@ -336,7 +353,9 @@ async function handleTranslatedProxy(
       const chunks: Buffer[] = [];
       upstreamRes.on("data", (chunk: Buffer) => chunks.push(chunk));
       upstreamRes.on("end", () => {
-        const raw = Buffer.concat(chunks);
+        // Defensive: a backend may compress even when not asked to.
+        const encoding = String(upstreamRes.headers["content-encoding"] ?? "");
+        const raw = decodeUpstream(Buffer.concat(chunks), encoding);
         const contentType = String(upstreamRes.headers["content-type"] ?? "");
         let payload = raw;
         if (contentType.includes("application/json") && raw.length > 0) {
@@ -349,6 +368,8 @@ async function handleTranslatedProxy(
         const outHeaders = { ...upstreamRes.headers };
         // We set an exact length, so the upstream's chunked framing must go.
         delete outHeaders["transfer-encoding"];
+        // We emit identity bytes (decoded above), so drop any upstream encoding.
+        delete outHeaders["content-encoding"];
         outHeaders["content-length"] = String(payload.length);
         if (attribute) outHeaders["x-oat-backend"] = String(backend.port);
         res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
