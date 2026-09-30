@@ -124,6 +124,24 @@ function emptyReadBody(pathname: string): unknown | undefined {
   }
 }
 
+/** The upstream v2 event's location directory, if it carries one. */
+function eventDirectory(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const direct = record.location;
+  if (direct && typeof direct === "object" && typeof (direct as Record<string, unknown>).directory === "string") {
+    return (direct as Record<string, unknown>).directory as string;
+  }
+  const data = record.data;
+  if (data && typeof data === "object") {
+    const nested = (data as Record<string, unknown>).location;
+    if (nested && typeof nested === "object" && typeof (nested as Record<string, unknown>).directory === "string") {
+      return (nested as Record<string, unknown>).directory as string;
+    }
+  }
+  return undefined;
+}
+
 /** Write one merged SSE event downstream unless the response has already ended. */
 function writeEvent(res: http.ServerResponse, event: SseEvent, attribute: boolean): void {
   if (!res.writableEnded) res.write(formatSseEvent(event, { attribute }));
@@ -185,8 +203,12 @@ async function pumpOnce(
       } catch {
         continue;
       }
+      const directory = eventDirectory(raw);
       for (const mapped of translateV2Events(raw)) {
-        const chunk = `data: ${JSON.stringify(mapped)}\n\n`;
+        // v1 SSE carries the OpenCode envelope `{directory, payload:{type,properties}}`;
+        // the bridge's parser (and the mobile app) reject a bare `{type,properties}`.
+        const envelope = directory === undefined ? { payload: mapped } : { directory, payload: mapped };
+        const chunk = `data: ${JSON.stringify(envelope)}\n\n`;
         for (const event of merger.ingest(source, chunk)) writeEvent(res, event, attribute);
       }
     }
@@ -226,9 +248,9 @@ function handleSse(req: http.IncomingMessage, res: http.ServerResponse, deps: Mu
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  // Prime the stream with a v1-shaped `server.connected` so the client has a valid
-  // envelope immediately (a bare `: comment` makes some clients warn/skip).
-  res.write('data: {"type":"server.connected","properties":{}}\n\n');
+  // Prime the stream with a valid v1 `server.connected` envelope so the client
+  // has an immediately-parseable frame.
+  res.write('data: {"payload":{"type":"server.connected","properties":{}}}\n\n');
 
   const merger = new SseMerger({ collapseServerConnected: true });
   const controllers = new Map<number, AbortController>();
