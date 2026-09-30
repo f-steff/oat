@@ -137,20 +137,22 @@ Linux `${XDG_STATE_HOME:-~/.local/state}/oat`.
 ## Commands
 
 ```
-oat                       start (detached) if needed, then show status
-oat start                 start the daemon (idempotent)
-oat status                show daemon status
-oat list                  list discovered opencode backends
-oat reload                re-scan for opencode backends
-oat stop                  stop the daemon
-oat opencode [args]       run the installed opencode here (args pass through)
-oat sesori-bridge [args]  run the bridge here, pointed at OAT (args pass through)
-oat serve                 run the daemon in the foreground (internal)
-oat version               print version
+oat [-json]                  start (detached) if needed, then show status
+oat start [-json]            start the daemon (idempotent)
+oat status [-json]           show daemon status (pid, port, generation, backend count)
+oat list [-json]             list discovered opencode backends (KIND, VERSION, DIRECTORY)
+oat reload [-json]           re-scan for opencode backends now
+oat stop [-json]             stop the daemon and its hidden servers (your terminals are left alone)
+oat opencode [args...]       run the installed opencode here (v1 or v2, auto-detected)
+oat sesori-bridge [args...]  run the bridge here, pointed at OAT (args pass through)
+oat serve                    run the daemon in the foreground (internal)
+oat version                  print version
+oat help                     show help (commands, options, environment)
 ```
 
-`status` and `list` print a readable table and refresh discovery first; append `-json` for JSON
-(`oat list -json`).
+Options go before the command (`oat --port 5000 list`): `-json`/`--json`, `--port <n>`,
+`--log-file <path>`, `-h`/`--help`, `-v`/`--version`. Run **`oat help`** for the full list and the
+environment variables.
 
 ### `oat opencode`
 
