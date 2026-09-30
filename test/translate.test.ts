@@ -224,12 +224,24 @@ function fixtureEvents(): unknown[] {
 test("translateV2Events maps the captured v2 stream to v1 event types", () => {
   const types = new Set<string>();
   let userParts = 0;
+  const assistantKeys = ["id", "sessionID", "role", "time", "parentID", "modelID", "providerID", "mode", "agent", "path", "cost", "tokens"];
   for (const raw of fixtureEvents()) {
     for (const event of translateV2Events(raw)) {
       types.add(event.type);
+      if (event.type === "message.updated") {
+        const info = event.properties.info as Record<string, unknown> | undefined;
+        if (info?.role === "assistant") {
+          for (const key of assistantKeys) assert.ok(key in info, `assistant info.${key}`);
+        } else if (info?.role === "user") {
+          assert.ok("agent" in info, "user info.agent");
+          assert.ok("model" in info, "user info.model");
+        }
+      }
       if (event.type === "message.part.updated") {
-        const part = event.properties.part as { type?: string } | undefined;
+        const part = event.properties.part as { type?: string; time?: unknown } | undefined;
         if (part?.type === "text") userParts += 1;
+        // The bridge's ReasoningPart model requires a {start, end} range.
+        if (part?.type === "reasoning") assert.ok(part.time, "reasoning part time");
       }
     }
   }

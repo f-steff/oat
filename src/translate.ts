@@ -409,15 +409,89 @@ export interface V1Event {
   properties: Record<string, unknown>;
 }
 
-/** Build a v1 `message.part.updated` payload for a streamed text/reasoning part. */
-function partUpdated(sessionID: unknown, messageID: string, kind: "text" | "reasoning", text: unknown): V1Event {
+/** Per-assistant metadata remembered from `session.step.started` (model/agent). */
+interface AssistantMeta {
+  agent: string;
+  modelID: string;
+  providerID: string;
+  variant?: string;
+}
+const assistantMetaByMessage = new Map<string, AssistantMeta>();
+/** Last user message id per session, so streamed assistant messages can link to it. */
+const lastUserMessageBySession = new Map<string, string>();
+
+/** Coerce an unknown value to a string ("" when not a string). */
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** The directory carried by a v2 event's `location`, or "". */
+function eventDir(event: Record<string, unknown>): string {
+  const location = asRecord(event.location);
+  return typeof location?.directory === "string" ? location.directory : "";
+}
+
+/** A v1 `tokens` map with the non-null fields the bridge's model requires. */
+function tokensOr(value: unknown): Record<string, unknown> {
+  const tokens = asRecord(value);
+  if (tokens && tokens.cache) return tokens;
+  return { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+}
+
+/** Build a complete v1 `assistant` message for `message.updated` (SSE). */
+function assistantMessageUpdated(
+  sessionID: unknown,
+  messageID: string,
+  created: number,
+  directory: string,
+  data: Record<string, unknown>,
+): V1Event {
+  const meta = assistantMetaByMessage.get(messageID);
+  const parentID = typeof sessionID === "string" ? lastUserMessageBySession.get(sessionID) ?? "" : "";
   return {
-    type: "message.part.updated",
+    type: "message.updated",
     properties: {
       sessionID,
-      part: { id: `${messageID}_${kind}`, messageID, sessionID, type: kind, text: typeof text === "string" ? text : "" },
+      info: {
+        id: messageID,
+        sessionID,
+        role: "assistant",
+        time: { created, completed: created },
+        parentID,
+        modelID: meta?.modelID ?? "",
+        providerID: meta?.providerID ?? "",
+        mode: "build",
+        agent: meta?.agent ?? "build",
+        path: { cwd: directory, root: directory },
+        cost: typeof data.cost === "number" ? data.cost : 0,
+        tokens: tokensOr(data.tokens),
+        ...(meta?.variant ? { variant: meta.variant } : {}),
+        finish: data.finish,
+      },
     },
   };
+}
+
+/** Build a v1 `message.part.updated` payload for a streamed text/reasoning part. */
+function partUpdated(
+  sessionID: unknown,
+  messageID: string,
+  kind: "text" | "reasoning",
+  text: unknown,
+  ordinal: unknown,
+  created: number,
+): V1Event {
+  const index = typeof ordinal === "number" ? ordinal : 0;
+  const part: Record<string, unknown> = {
+    id: `${messageID}_${kind}_${index}`,
+    messageID,
+    sessionID,
+    type: kind,
+    text: typeof text === "string" ? text : "",
+  };
+  // v1 `ReasoningPart` requires a `{start, end}` range; `TextPart` does not.
+  if (kind === "reasoning") part.time = { start: created, end: created };
+  return { type: "message.part.updated", properties: { sessionID, part } };
 }
 
 /**
@@ -434,7 +508,8 @@ export function translateV2Event(raw: unknown): V1Event | null {
   const data = asRecord(event.data) ?? {};
   const sessionID = data.sessionID;
   const messageID = typeof data.assistantMessageID === "string" ? data.assistantMessageID : undefined;
-  const created = typeof event.created === "number" ? event.created : undefined;
+  const created = typeof event.created === "number" ? event.created : 0;
+  const directory = eventDir(event);
 
   switch (type) {
     case "server.connected":
@@ -458,44 +533,48 @@ export function translateV2Event(raw: unknown): V1Event | null {
     case "session.inbox.delivered": {
       const id = typeof data.inboxID === "string" ? data.inboxID : undefined;
       if (!id) return null;
-      return {
-        type: "message.updated",
-        properties: { sessionID, info: { id, sessionID, role: "user", time: { created } } },
-      };
-    }
-    case "session.step.started":
-      if (!messageID) return null;
-      return {
-        type: "message.updated",
-        properties: { sessionID, info: { id: messageID, sessionID, role: "assistant", time: { created } } },
-      };
-    case "session.text.started":
-    case "session.text.delta":
-    case "session.text.ended":
-      if (!messageID) return null;
-      return partUpdated(sessionID, messageID, "text", data.delta ?? data.text);
-    case "session.reasoning.started":
-    case "session.reasoning.delta":
-    case "session.reasoning.ended":
-      if (!messageID) return null;
-      return partUpdated(sessionID, messageID, "reasoning", data.delta ?? data.text);
-    case "session.step.ended":
-      if (!messageID) return null;
+      if (typeof sessionID === "string") lastUserMessageBySession.set(sessionID, id);
+      const agents = Array.isArray(data.agents) ? data.agents : [];
+      const agent = typeof agents[0] === "string" ? (agents[0] as string) : "build";
       return {
         type: "message.updated",
         properties: {
           sessionID,
           info: {
-            id: messageID,
+            id,
             sessionID,
-            role: "assistant",
-            time: { created, completed: created },
-            cost: data.cost,
-            tokens: data.tokens,
-            finish: data.finish,
+            role: "user",
+            time: { created },
+            agent,
+            model: { providerID: "unknown", modelID: "unknown" },
           },
         },
       };
+    }
+    case "session.step.started": {
+      if (!messageID) return null;
+      const model = asRecord(data.model) ?? {};
+      assistantMetaByMessage.set(messageID, {
+        agent: str(data.agent) || "build",
+        modelID: str(model.id),
+        providerID: str(model.providerID),
+        ...(typeof model.variant === "string" ? { variant: model.variant } : {}),
+      });
+      return assistantMessageUpdated(sessionID, messageID, created, directory, data);
+    }
+    case "session.text.started":
+    case "session.text.delta":
+    case "session.text.ended":
+      if (!messageID) return null;
+      return partUpdated(sessionID, messageID, "text", data.delta ?? data.text, data.ordinal, created);
+    case "session.reasoning.started":
+    case "session.reasoning.delta":
+    case "session.reasoning.ended":
+      if (!messageID) return null;
+      return partUpdated(sessionID, messageID, "reasoning", data.delta ?? data.text, data.ordinal, created);
+    case "session.step.ended":
+      if (!messageID) return null;
+      return assistantMessageUpdated(sessionID, messageID, created, directory, data);
     case "session.execution.succeeded":
     case "session.execution.failed":
     case "session.execution.ended":
@@ -514,7 +593,7 @@ export function translateV2EventParts(raw: unknown): V1Event[] {
     if (!id) return [];
     const payload = asRecord(asRecord(data.item)?.payload);
     const text = typeof payload?.text === "string" ? payload.text : "";
-    return [partUpdated(data.sessionID, id, "text", text)];
+    return [partUpdated(data.sessionID, id, "text", text, 0, typeof event?.created === "number" ? event.created : 0)];
   }
   return [];
 }
