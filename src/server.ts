@@ -1,15 +1,18 @@
 import http from "node:http";
 import net from "node:net";
+import zlib from "node:zlib";
 import type { Duplex } from "node:stream";
 
 import { log } from "./logger.js";
 import type { Registry } from "./registry.js";
 import { pickBackend } from "./router.js";
-import { formatSseEvent, SseMerger, type SseEvent } from "./sse.js";
+import { basicAuth } from "./discovery/discover.js";
+import { isReserve, synthesizeReservedMessage, translateRequest, translateV2Events, translateV2Response } from "./translate.js";
+import { formatSseEvent, getData, splitSseEvents, SseMerger, type SseEvent } from "./sse.js";
 import type { Backend, OatConfig } from "./types.js";
 
 /** OAT's own semantic version, reported by `/global/health` and the control API. */
-export const OAT_VERSION = "0.1.0";
+export const OAT_VERSION = "0.2.0";
 /** Reserved URL prefix for the local control API. */
 export const OAT_CONTROL_PREFIX = "/__oat";
 
@@ -119,6 +122,24 @@ function emptyReadBody(pathname: string): unknown | undefined {
   }
 }
 
+/** The upstream v2 event's location directory, if it carries one. */
+function eventDirectory(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const direct = record.location;
+  if (direct && typeof direct === "object" && typeof (direct as Record<string, unknown>).directory === "string") {
+    return (direct as Record<string, unknown>).directory as string;
+  }
+  const data = record.data;
+  if (data && typeof data === "object") {
+    const nested = (data as Record<string, unknown>).location;
+    if (nested && typeof nested === "object" && typeof (nested as Record<string, unknown>).directory === "string") {
+      return (nested as Record<string, unknown>).directory as string;
+    }
+  }
+  return undefined;
+}
+
 /** Write one merged SSE event downstream unless the response has already ended. */
 function writeEvent(res: http.ServerResponse, event: SseEvent, attribute: boolean): void {
   if (!res.writableEnded) res.write(formatSseEvent(event, { attribute }));
@@ -140,36 +161,61 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Open one `/global/event` connection and forward its events until it ends. */
+/** Open one event-stream connection to a backend and forward its events until it ends. */
 async function pumpOnce(
-  baseUrl: string,
-  source: string,
+  backend: Backend,
   merger: SseMerger,
   res: http.ServerResponse,
   signal: AbortSignal,
   attribute: boolean,
 ): Promise<void> {
-  const response = await fetch(`${baseUrl}/global/event`, {
-    headers: { accept: "text/event-stream" },
-    signal,
-  });
+  // v1 streams `/global/event`; v2 streams `/api/event` and needs Basic auth.
+  const path = backend.kind === "v2" ? "/api/event" : "/global/event";
+  const headers: Record<string, string> = { accept: "text/event-stream" };
+  if (backend.password) headers.authorization = basicAuth(backend.password);
+  const response = await fetch(`${backend.baseUrl}${path}`, { headers, signal });
   if (!response.ok || !response.body) throw new Error(`upstream ${response.status}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  // Read chunks and emit every complete event.
+  const source = String(backend.port);
+  // v2 blocks are carried here; v1 blocks are carried inside the merger.
+  let carry = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    for (const event of merger.ingest(source, decoder.decode(value, { stream: true }))) {
-      writeEvent(res, event, attribute);
+    const text = decoder.decode(value, { stream: true });
+    if (backend.kind !== "v2") {
+      for (const event of merger.ingest(source, text)) writeEvent(res, event, attribute);
+      continue;
+    }
+    // Parse each v2 event, translate it to v1, and reuse the merger for collapse/typing.
+    carry += text;
+    const { events, rest } = splitSseEvents(carry);
+    carry = rest;
+    for (const block of events) {
+      const data = getData(block);
+      if (!data) continue;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      const directory = eventDirectory(raw);
+      for (const mapped of translateV2Events(raw)) {
+        // v1 SSE carries the OpenCode envelope `{directory, payload:{type,properties}}`;
+        // the bridge's parser (and the mobile app) reject a bare `{type,properties}`.
+        const envelope = directory === undefined ? { payload: mapped } : { directory, payload: mapped };
+        const chunk = `data: ${JSON.stringify(envelope)}\n\n`;
+        for (const event of merger.ingest(source, chunk)) writeEvent(res, event, attribute);
+      }
     }
   }
 }
 
 /** Keep a backend's SSE stream merged, reconnecting with backoff if it drops. */
 async function pumpBackend(
-  baseUrl: string,
-  source: string,
+  backend: Backend,
   merger: SseMerger,
   res: http.ServerResponse,
   signal: AbortSignal,
@@ -179,11 +225,11 @@ async function pumpBackend(
   // Retry until the downstream client disconnects (or the backend is removed).
   while (!signal.aborted) {
     try {
-      await pumpOnce(baseUrl, source, merger, res, signal, attribute);
+      await pumpOnce(backend, merger, res, signal, attribute);
       delay = 500;
     } catch (error) {
       if (signal.aborted) break;
-      log.debug(`sse upstream ${source} ended: ${(error as Error).message}`);
+      log.debug(`sse upstream ${backend.port} ended: ${(error as Error).message}`);
     }
     if (signal.aborted) break;
     await sleep(delay, signal);
@@ -200,7 +246,9 @@ function handleSse(req: http.IncomingMessage, res: http.ServerResponse, deps: Mu
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  res.write(": oat ready\n\n");
+  // Prime the stream with a valid v1 `server.connected` envelope so the client
+  // has an immediately-parseable frame.
+  res.write('data: {"payload":{"type":"server.connected","properties":{}}}\n\n');
 
   const merger = new SseMerger({ collapseServerConnected: true });
   const controllers = new Map<number, AbortController>();
@@ -214,7 +262,7 @@ function handleSse(req: http.IncomingMessage, res: http.ServerResponse, deps: Mu
       if (controllers.has(backend.port)) continue;
       const controller = new AbortController();
       controllers.set(backend.port, controller);
-      void pumpBackend(backend.baseUrl, String(backend.port), merger, res, controller.signal, attribute);
+      void pumpBackend(backend, merger, res, controller.signal, attribute);
     }
     for (const port of [...controllers.keys()]) {
       if (wanted.has(port)) continue;
@@ -243,15 +291,189 @@ function isRunAction(method: string, pathname: string): boolean {
 }
 
 /** Ask a backend for a session's directory (used when only the id is known). */
-async function fetchSessionDirectory(baseUrl: string, sessionId: string): Promise<string | null> {
+async function fetchSessionDirectory(backend: Backend, sessionId: string): Promise<string | null> {
   try {
-    const response = await fetch(`${baseUrl}/session/${sessionId}`, { signal: AbortSignal.timeout(10_000) });
+    const v2 = backend.kind === "v2";
+    const headers: Record<string, string> = {};
+    if (backend.password) headers.authorization = basicAuth(backend.password);
+    const path = v2 ? `/api/session/${sessionId}` : `/session/${sessionId}`;
+    const response = await fetch(`${backend.baseUrl}${path}`, { signal: AbortSignal.timeout(10_000), headers });
     if (!response.ok) return null;
-    const body = (await response.json()) as { directory?: unknown };
-    return typeof body.directory === "string" ? body.directory : null;
+    const body = (await response.json()) as Record<string, unknown>;
+    // v2 wraps the session in `{ data }` and nests the directory under `location`.
+    const data = v2 ? ((body.data as Record<string, unknown>) ?? body) : body;
+    const location = data.location as { directory?: unknown } | undefined;
+    const directory = location?.directory ?? data.directory;
+    return typeof directory === "string" ? directory : null;
   } catch {
     return null;
   }
+}
+
+/** Read a full request body into a buffer (small JSON payloads only). */
+function readBody(req: http.IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+/** Fetch the full v2 message history for a session (v2 pages, v1 does not). */
+async function fetchV2Messages(backend: Backend, sessionId: string, directory: string | null): Promise<unknown[]> {
+  const out: unknown[] = [];
+  const base = `http://127.0.0.1:${backend.port}/api/session/${encodeURIComponent(sessionId)}/message`;
+  let cursor: string | undefined;
+  for (let page = 0; page < 200; page++) {
+    const params = new URLSearchParams();
+    params.set("limit", "200");
+    if (cursor) params.set("cursor", cursor);
+    else params.set("order", "desc");
+    if (directory) params.set("directory", directory);
+    try {
+      const response = await fetch(`${base}?${params.toString()}`, {
+        headers: {
+          accept: "application/json",
+          ...(backend.password ? { authorization: basicAuth(backend.password) } : {}),
+        },
+      });
+      if (!response.ok) break;
+      const json = (await response.json()) as { data?: unknown; cursor?: { next?: unknown } };
+      const data = Array.isArray(json?.data) ? json.data : [];
+      out.push(...data);
+      cursor = typeof json?.cursor?.next === "string" ? json.cursor.next : undefined;
+      if (!cursor || data.length === 0) break;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
+/** Fetch the v2 model catalog (`/api/model`), used to build v1 providers. */
+async function fetchV2Models(backend: Backend, directory: string | null): Promise<unknown[]> {
+  try {
+    const query = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const response = await fetch(`http://127.0.0.1:${backend.port}/api/model${query}`, {
+      headers: {
+        accept: "application/json",
+        ...(backend.password ? { authorization: basicAuth(backend.password) } : {}),
+      },
+    });
+    if (!response.ok) return [];
+    const json = (await response.json()) as { data?: unknown };
+    return Array.isArray(json?.data) ? json.data : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Decode an upstream body when it arrives compressed (gzip/deflate/br). */
+function decodeUpstream(raw: Buffer, encoding: string): Buffer {
+  try {
+    if (encoding.includes("gzip")) return zlib.gunzipSync(raw);
+    if (encoding.includes("deflate")) return zlib.inflateSync(raw);
+    if (encoding.includes("br")) return zlib.brotliDecompressSync(raw);
+  } catch {
+    // Fall through: return the bytes as-is.
+  }
+  return raw;
+}
+
+/** Translate a v1 request to a v2 backend and return a v1-shaped response. */
+async function handleTranslatedProxy(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  backend: Backend,
+  attribute: boolean,
+): Promise<void> {
+  const directory = directoryFor(req, url);
+  // v1 providers embed their models; v2 exposes them separately, so fetch them.
+  const wantsModels = url.pathname === "/provider" || url.pathname === "/config/providers";
+  const models = wantsModels ? await fetchV2Models(backend, directory) : undefined;
+
+  // v1 expects the full message history; v2 pages (newest 50 by default), so
+  // fetch every page and translate the combined list.
+  const messagesMatch = (req.method ?? "GET") === "GET" ? /^\/session\/([^/]+)\/message$/.exec(url.pathname) : null;
+  if (messagesMatch?.[1]) {
+    const all = await fetchV2Messages(backend, messagesMatch[1], directory);
+    sendJson(res, 200, translateV2Response(url.pathname, { data: all }, directory));
+    return;
+  }
+
+  let body: unknown;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const raw = await readBody(req);
+    if (raw.length > 0) {
+      try {
+        body = JSON.parse(raw.toString("utf8"));
+      } catch {
+        body = undefined;
+      }
+    }
+  }
+  // A v1 "reserve" has no v2 equivalent and would double-admit the user message.
+  if (body !== undefined && isReserve(body)) {
+    sendJson(res, 200, synthesizeReservedMessage(extractSessionId(url.pathname) ?? "", body));
+    return;
+  }
+  // v1 `/question` (pending user questions) has no v2 model equivalent — v2 uses
+  // session forms with a different shape and reply route. Answer an empty list so
+  // cold start settles instead of falling through to the v2 web UI (SPA HTML).
+  if (url.pathname === "/question") {
+    sendJson(res, 200, []);
+    return;
+  }
+  const translated = translateRequest(req.method ?? "GET", url.pathname, url.search, body, directory);
+  const headers: Record<string, string | string[] | undefined> = { ...req.headers };
+  for (const header of HOP_BY_HOP) delete headers[header];
+  delete headers["authorization"];
+  delete headers["content-length"];
+  delete headers["x-opencode-directory"];
+  // We must parse the upstream JSON to translate it, so ask for it uncompressed.
+  // (The bridge's HTTP client sends `Accept-Encoding: gzip`, which would otherwise
+  // come back compressed and force the translation below to silently no-op.)
+  delete headers["accept-encoding"];
+  if (backend.password) headers["authorization"] = basicAuth(backend.password);
+  if (translated.body !== undefined) headers["content-type"] = "application/json";
+  const upstream = http.request(
+    { host: "127.0.0.1", port: backend.port, method: translated.method, path: translated.path, headers },
+    (upstreamRes) => {
+      const chunks: Buffer[] = [];
+      upstreamRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+      upstreamRes.on("end", () => {
+        // Defensive: a backend may compress even when not asked to.
+        const encoding = String(upstreamRes.headers["content-encoding"] ?? "");
+        const raw = decodeUpstream(Buffer.concat(chunks), encoding);
+        const contentType = String(upstreamRes.headers["content-type"] ?? "");
+        let payload = raw;
+        if (contentType.includes("application/json") && raw.length > 0) {
+          try {
+            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")), directory, models)));
+          } catch {
+            // Not JSON after all; return it unchanged.
+          }
+        }
+        const outHeaders = { ...upstreamRes.headers };
+        // We set an exact length, so the upstream's chunked framing must go.
+        delete outHeaders["transfer-encoding"];
+        // We emit identity bytes (decoded above), so drop any upstream encoding.
+        delete outHeaders["content-encoding"];
+        outHeaders["content-length"] = String(payload.length);
+        if (attribute) outHeaders["x-oat-backend"] = String(backend.port);
+        res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
+        res.end(payload);
+      });
+    },
+  );
+  upstream.on("error", (error) => {
+    if (!res.headersSent) sendJson(res, 502, { error: `oat proxy error: ${error.message}` });
+    else res.end();
+  });
+  if (translated.body !== undefined) upstream.write(translated.body);
+  upstream.end();
 }
 
 /** Route and proxy a normal HTTP request to the selected backend. */
@@ -284,7 +506,7 @@ async function handleProxy(
       let target = directory ?? null;
       if (!target && sessionId) {
         const anchor = await deps.supervisor.ensureAnchor();
-        if (anchor) target = await fetchSessionDirectory(anchor.baseUrl, sessionId);
+        if (anchor) target = await fetchSessionDirectory(anchor, sessionId);
       }
       if (target) {
         const managed = await deps.supervisor.ensure(target, sessionId ?? undefined);
@@ -327,10 +549,21 @@ async function handleProxy(
   if (sessionId) deps.registry.setAffinity(sessionId, backend.port);
   log.debug(`route ${req.method} ${url.pathname} dir=${directory ?? "-"} -> ${backend.port} (${decision.reason})`);
 
+  // v2 backends speak `/api/*` + Basic auth. A v2 client (already calling `/api/*`)
+  // is passed straight through; a v1 client (v1 paths) is translated. Set
+  // `OAT_TRANSLATE_V2_TO_V1_BRIDGE=0` to force passthrough for everything.
+  const v2Client = url.pathname === "/api" || url.pathname.startsWith("/api/");
+  if (backend.kind === "v2" && deps.config.translateV2 && !v2Client) {
+    await handleTranslatedProxy(req, res, url, backend, deps.config.debugAttribution);
+    return;
+  }
+
   // Copy headers, dropping hop-by-hop ones and any auth meant for another server.
   const headers: Record<string, string | string[] | undefined> = { ...req.headers };
   for (const header of HOP_BY_HOP) delete headers[header];
   delete headers["authorization"];
+  // Password-protected backends (v1 or v2) require HTTP Basic auth.
+  if (backend.password) headers["authorization"] = basicAuth(backend.password);
 
   // Stream the request upstream and the response back down (no buffering).
   const upstream = http.request(
@@ -376,8 +609,13 @@ function handleUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer, 
   const upstream = net.connect(decision.backend.port, "127.0.0.1", () => {
     const lines = [`${req.method ?? "GET"} ${req.url ?? "/"} HTTP/1.1`];
     for (const [key, value] of Object.entries(req.headers)) {
+      // Replace any client auth with the backend's own credentials below.
+      if (key.toLowerCase() === "authorization") continue;
       if (Array.isArray(value)) for (const item of value) lines.push(`${key}: ${item}`);
       else if (value !== undefined) lines.push(`${key}: ${value}`);
+    }
+    if (decision.backend.password) {
+      lines.push(`authorization: ${basicAuth(decision.backend.password)}`);
     }
     lines.push("", "");
     upstream.write(lines.join("\r\n"));

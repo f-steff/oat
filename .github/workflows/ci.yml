@@ -1,9 +1,9 @@
 name: CI
 
+# Run on pull requests only: tests gate the merge, so there is no separate run
+# on `main` after a squash-merge.
 on:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
 
 permissions:
@@ -51,3 +51,49 @@ jobs:
           cache: npm
       - run: npm ci
       - run: bash ci/lint.sh
+
+  # macOS can't be tested locally via Docker; cover it here (build + test + lint).
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash ci/build.sh
+      - run: bash ci/test.sh
+      - run: bash ci/lint.sh
+
+  # Real opencode v1 end-to-end (installs opencode-ai v1 + runs the e2e).
+  v1-e2e:
+    name: v1-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash ci/e2e-v1.sh
+
+  # Real opencode v2 end-to-end (installs @opencode/cli v2 + runs the v2 e2e).
+  # Linux and macOS: the v2 executable and per-OS discovery differ from v1.
+  v2-e2e:
+    name: v2-e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash ci/e2e-v2.sh

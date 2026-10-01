@@ -21,7 +21,7 @@ export function resolveExecutable(name: string, candidates: string[] = []): { co
     if (candidate && fs.existsSync(candidate)) return { command: candidate, shell: false };
   }
   try {
-    const found = execFileSync("where", [name], { encoding: "utf8", timeout: 5_000 })
+    const found = execFileSync("where", [name], { encoding: "utf8", timeout: 5_000, windowsHide: true })
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -42,7 +42,10 @@ export function resolveOpencodeExecutable(bin: string): { command: string; shell
   if (bin.includes("/") || bin.includes("\\")) return { command: bin, shell: false };
   if (process.platform !== "win32") return { command: bin, shell: false };
   // Prefer the real .exe shipped with the npm package (no console window).
+  // `@opencode/cli` (v2) is preferred over `opencode-ai` (v1) so the active
+  // single-generation install wins even during a transition where both remain.
   const candidates = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "@opencode", "cli", "bin", "opencode.exe") : "",
     process.env.APPDATA ? path.join(process.env.APPDATA, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe") : "",
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "opencode", "bin", "opencode.exe") : "",
   ];
@@ -51,7 +54,7 @@ export function resolveOpencodeExecutable(bin: string): { command: string; shell
   }
   // Resolve via PATH, accepting a real .exe when one is found.
   try {
-    const found = execFileSync("where", ["opencode"], { encoding: "utf8", timeout: 5_000 })
+    const found = execFileSync("where", ["opencode"], { encoding: "utf8", timeout: 5_000, windowsHide: true })
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
@@ -73,7 +76,7 @@ export function killProcess(pid: number): void {
     // Already gone.
   }
   try {
-    execFileSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore", timeout: 8_000 });
+    execFileSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore", timeout: 8_000, windowsHide: true });
   } catch {
     // taskkill is Windows-only or the process already exited.
   }
