@@ -165,12 +165,52 @@ test("translateV2Response maps v2 messages to v1 {info,parts} and drops idle (fi
   assert.deepEqual(texts, ["OK"]);
 });
 
-test("translateV2Response maps v2 providers to v1 /provider and /config/providers (fixtures)", () => {
-  const provider = translateV2Response("/provider", fixture("provider.json")) as Record<string, unknown>;
+test("translateV2Response maps v2 providers+models to v1 shapes", () => {
+  const models = [
+    {
+      id: "m1",
+      modelID: "m1",
+      providerID: "opencode",
+      family: "f",
+      name: "M1",
+      package: "@opencode/ai/providers/openai-compatible",
+      settings: {},
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+      variants: [{ id: "high", settings: { reasoningEffort: "high" } }],
+      time: { released: 1790640000000 },
+      status: "active",
+      enabled: true,
+      cost: [{ input: 2, output: 10, cache: { read: 0.1, write: 2.5 } }],
+      limit: { context: 100, input: 90, output: 8 },
+    },
+  ];
+
+  const provider = translateV2Response("/provider", fixture("provider.json"), null, models) as Record<string, unknown>;
   assert.equal(Array.isArray(provider.all), true);
   assert.deepEqual(provider.connected, ["opencode"]);
 
-  const config = translateV2Response("/config/providers", fixture("provider.json")) as Record<string, unknown>;
+  const first = (provider.all as Array<Record<string, unknown>>)[0] ?? {};
+  assert.equal(first.source, "api");
+  assert.deepEqual(first.env, []);
+  const pmodels = first.models as Record<string, Record<string, unknown>>;
+  assert.ok(pmodels.m1, "model attached to provider");
+  assert.equal(pmodels.m1?.status, "active");
+  assert.equal(pmodels.m1?.providerID, "opencode");
+  assert.deepEqual(pmodels.m1?.capabilities, {
+    temperature: true,
+    reasoning: true,
+    attachment: true,
+    toolcall: true,
+    input: { text: true, audio: false, image: true, video: false, pdf: false },
+    output: { text: true, audio: false, image: false, video: false, pdf: false },
+    interleaved: false,
+  });
+  assert.deepEqual(pmodels.m1?.cost, { input: 2, output: 10, cache: { read: 0.1, write: 2.5 } });
+
+  const config = translateV2Response("/config/providers", fixture("provider.json"), null, models) as Record<
+    string,
+    unknown
+  >;
   assert.equal(Array.isArray(config.providers), true);
   assert.deepEqual(config.default, {});
 });

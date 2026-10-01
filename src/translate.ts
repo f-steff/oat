@@ -25,6 +25,28 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+/** Coerce to a string ("" when not one) — for v1 models that cast non-null strings. */
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** Coerce to a number (fallback when not one). */
+function num(value: unknown, fallback = 0): number {
+  return typeof value === "number" ? value : fallback;
+}
+
+/** v2 modality array -> the v1 capabilities input/output booleans. */
+function modality(value: unknown): Record<string, boolean> {
+  const list = Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+  return {
+    text: list.includes("text"),
+    audio: list.includes("audio"),
+    image: list.includes("image"),
+    video: list.includes("video"),
+    pdf: list.includes("pdf"),
+  };
+}
+
 const SESSION_MESSAGE = /^\/session\/([^/]+)\/(message|prompt_async)$/;
 const SESSION_SUBRESOURCE = /^\/session\/([^/]+)\/(command|shell|abort|summarize|init|revert|unrevert|fork|share)$/;
 const SESSION = /^\/session\/([^/]+)$/;
@@ -222,6 +244,87 @@ export function translateV2PermissionRequest(value: unknown): unknown {
 }
 
 /**
+ * v2 `Model` -> v1 `Model`: the bridge's model casts many fields non-null that v2
+ * omits (api/capabilities/cost/limit/status/options/headers/release_date).
+ */
+export function translateV2Model(value: unknown): unknown {
+  const model = asRecord(value);
+  if (!model) return value;
+  const caps = asRecord(model.capabilities) ?? {};
+  const baseCost = (Array.isArray(model.cost) ? asRecord(model.cost[0]) : asRecord(model.cost)) ?? {};
+  const cache = asRecord(baseCost.cache) ?? {};
+  const limit = asRecord(model.limit) ?? {};
+  const time = asRecord(model.time) ?? {};
+  const pkg = text(model.package);
+
+  const variants: Record<string, unknown> = {};
+  for (const entry of Array.isArray(model.variants) ? model.variants : []) {
+    const rec = asRecord(entry) ?? {};
+    const id = text(rec.id);
+    if (id) variants[id] = asRecord(rec.settings) ?? {};
+  }
+
+  const released = typeof time.released === "number" ? new Date(time.released).toISOString() : "";
+  return {
+    id: text(model.modelID) || text(model.id),
+    providerID: text(model.providerID),
+    api: { id: pkg, url: "", npm: pkg },
+    name: text(model.name),
+    ...(typeof model.family === "string" ? { family: model.family } : {}),
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: true,
+      toolcall: caps.tools === true,
+      input: modality(caps.input),
+      output: modality(caps.output),
+      interleaved: false,
+    },
+    cost: {
+      input: num(baseCost.input),
+      output: num(baseCost.output),
+      cache: { read: num(cache.read), write: num(cache.write) },
+    },
+    limit: {
+      context: num(limit.context),
+      output: num(limit.output),
+      ...(typeof limit.input === "number" ? { input: limit.input } : {}),
+    },
+    status: text(model.status) || "active",
+    options: asRecord(model.settings) ?? {},
+    headers: {},
+    release_date: released,
+    ...(Object.keys(variants).length > 0 ? { variants } : {}),
+  };
+}
+
+/**
+ * v2 `Provider` -> v1 `Provider`, attaching the models v2 lists separately. v1
+ * requires `source`/`env`/`options`/`models` (all non-null).
+ */
+export function translateV2Provider(value: unknown, models: unknown[] = []): unknown {
+  const provider = asRecord(value);
+  if (!provider) return value;
+  const id = text(provider.id);
+  const mapped: Record<string, unknown> = {};
+  for (const entry of models) {
+    const model = asRecord(entry);
+    if (!model || text(model.providerID) !== id) continue;
+    const translated = translateV2Model(model) as Record<string, unknown>;
+    const modelId = text(translated.id);
+    if (modelId) mapped[modelId] = translated;
+  }
+  return {
+    id,
+    name: text(provider.name),
+    source: "api",
+    env: [],
+    options: asRecord(provider.settings) ?? {},
+    models: mapped,
+  };
+}
+
+/**
  * v2 `Agent` -> v1 `Agent`: v2 sends `permissions` as `{action, resource,
  * effect}` where v1 expects `permission` as `{permission, pattern, action}`, and
  * v1 requires non-null `options`. `system` maps to the v1 `prompt`.
@@ -325,17 +428,21 @@ export function translateV2Message(
  * Translate an unwrapped v2 response body into the v1 shape expected for
  * `v1Path`. Unknown paths fall back to the plain `{ data }` unwrap.
  */
-export function translateV2Response(v1Path: string, body: unknown, directory?: string | null): unknown {
+export function translateV2Response(v1Path: string, body: unknown, directory?: string | null, models?: unknown[]): unknown {
   const unwrapped = unwrapV2Response(body);
-  // v2 `/api/provider` -> v1 `/provider` ({all, default, connected}).
+  // v2 `/api/provider` -> v1 `/provider` ({all, default, connected}) and
+  // `/config/providers` ({providers, default}). v1 providers must carry their
+  // models, which v2 exposes separately (passed in as `models`).
   if (v1Path === "/provider" || v1Path === "/config/providers") {
     const list = Array.isArray(unwrapped) ? unwrapped : [];
-    if (v1Path === "/config/providers") return { providers: list, default: {} };
+    const providers = list.map((entry) => translateV2Provider(entry, models ?? []));
+    if (v1Path === "/config/providers") return { providers, default: {} };
     const connected = list
       .map((entry) => asRecord(entry))
       .filter((entry) => entry?.activation === "enabled")
-      .map((entry) => entry?.id);
-    return { all: list, default: {}, connected };
+      .map((entry) => entry?.id)
+      .filter((id): id is string => typeof id === "string");
+    return { all: providers, default: {}, connected };
   }
   // Session lists and single sessions: lift `location.directory` to `directory`.
   // `/experimental/session` is v1's global session list (mapped to `/api/session`)

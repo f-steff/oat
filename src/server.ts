@@ -320,6 +320,24 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+/** Fetch the v2 model catalog (`/api/model`), used to build v1 providers. */
+async function fetchV2Models(backend: Backend, directory: string | null): Promise<unknown[]> {
+  try {
+    const query = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+    const response = await fetch(`http://127.0.0.1:${backend.port}/api/model${query}`, {
+      headers: {
+        accept: "application/json",
+        ...(backend.password ? { authorization: basicAuth(backend.password) } : {}),
+      },
+    });
+    if (!response.ok) return [];
+    const json = (await response.json()) as { data?: unknown };
+    return Array.isArray(json?.data) ? json.data : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Decode an upstream body when it arrives compressed (gzip/deflate/br). */
 function decodeUpstream(raw: Buffer, encoding: string): Buffer {
   try {
@@ -341,6 +359,9 @@ async function handleTranslatedProxy(
   attribute: boolean,
 ): Promise<void> {
   const directory = directoryFor(req, url);
+  // v1 providers embed their models; v2 exposes them separately, so fetch them.
+  const wantsModels = url.pathname === "/provider" || url.pathname === "/config/providers";
+  const models = wantsModels ? await fetchV2Models(backend, directory) : undefined;
   let body: unknown;
   if (req.method !== "GET" && req.method !== "HEAD") {
     const raw = await readBody(req);
@@ -389,7 +410,7 @@ async function handleTranslatedProxy(
         let payload = raw;
         if (contentType.includes("application/json") && raw.length > 0) {
           try {
-            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")), directory)));
+            payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, JSON.parse(raw.toString("utf8")), directory, models)));
           } catch {
             // Not JSON after all; return it unchanged.
           }
