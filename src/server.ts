@@ -320,6 +320,37 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+/** Fetch the full v2 message history for a session (v2 pages, v1 does not). */
+async function fetchV2Messages(backend: Backend, sessionId: string, directory: string | null): Promise<unknown[]> {
+  const out: unknown[] = [];
+  const base = `http://127.0.0.1:${backend.port}/api/session/${encodeURIComponent(sessionId)}/message`;
+  let cursor: string | undefined;
+  for (let page = 0; page < 200; page++) {
+    const params = new URLSearchParams();
+    params.set("limit", "200");
+    if (cursor) params.set("cursor", cursor);
+    else params.set("order", "desc");
+    if (directory) params.set("directory", directory);
+    try {
+      const response = await fetch(`${base}?${params.toString()}`, {
+        headers: {
+          accept: "application/json",
+          ...(backend.password ? { authorization: basicAuth(backend.password) } : {}),
+        },
+      });
+      if (!response.ok) break;
+      const json = (await response.json()) as { data?: unknown; cursor?: { next?: unknown } };
+      const data = Array.isArray(json?.data) ? json.data : [];
+      out.push(...data);
+      cursor = typeof json?.cursor?.next === "string" ? json.cursor.next : undefined;
+      if (!cursor || data.length === 0) break;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
 /** Fetch the v2 model catalog (`/api/model`), used to build v1 providers. */
 async function fetchV2Models(backend: Backend, directory: string | null): Promise<unknown[]> {
   try {
@@ -362,6 +393,16 @@ async function handleTranslatedProxy(
   // v1 providers embed their models; v2 exposes them separately, so fetch them.
   const wantsModels = url.pathname === "/provider" || url.pathname === "/config/providers";
   const models = wantsModels ? await fetchV2Models(backend, directory) : undefined;
+
+  // v1 expects the full message history; v2 pages (newest 50 by default), so
+  // fetch every page and translate the combined list.
+  const messagesMatch = (req.method ?? "GET") === "GET" ? /^\/session\/([^/]+)\/message$/.exec(url.pathname) : null;
+  if (messagesMatch?.[1]) {
+    const all = await fetchV2Messages(backend, messagesMatch[1], directory);
+    sendJson(res, 200, translateV2Response(url.pathname, { data: all }, directory));
+    return;
+  }
+
   let body: unknown;
   if (req.method !== "GET" && req.method !== "HEAD") {
     const raw = await readBody(req);

@@ -400,7 +400,17 @@ export function translateV2Message(
       }
       return base;
     });
-    const tokens = asRecord(message.tokens) ?? {};
+    // v1 `AssistantMessageTokens` requires numeric input/output/reasoning and a
+    // cache map; v2 may omit or partial-fill these, so normalize.
+    const rawTokens = asRecord(message.tokens) ?? {};
+    const rawCache = asRecord(rawTokens.cache) ?? {};
+    const tokens = {
+      input: num(rawTokens.input),
+      output: num(rawTokens.output),
+      reasoning: num(rawTokens.reasoning),
+      cache: { read: num(rawCache.read), write: num(rawCache.write) },
+      ...(typeof rawTokens.total === "number" ? { total: rawTokens.total } : {}),
+    };
     return {
       info: {
         id,
