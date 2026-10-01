@@ -6,7 +6,7 @@
 //
 // Run:  npm run build && node scripts/e2e-v2.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,9 +30,21 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  -- " + detail : ""}`);
 }
 
-// Resolve the opencode v2 executable (env override, else `opencode` on PATH).
+// Resolve the opencode v2 executable (env override, known npm global path, or PATH).
 function opencodeExe() {
-  return process.env.OPENCODE_BIN ?? "opencode";
+  const appData = process.env.APPDATA ?? "";
+  const candidates = [
+    process.env.OPENCODE_BIN,
+    process.env.OPENCODE_EXE,
+    path.join(appData, "npm", "node_modules", "@opencode", "cli", "bin", "opencode.exe"),
+    path.join(appData, "npm", "node_modules", "@opencode", "cli", "bin", "opencode"),
+    "opencode",
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (candidate === "opencode" || existsSync(candidate)) return candidate;
+  }
+  return "opencode";
 }
 
 function killTree(pid) {

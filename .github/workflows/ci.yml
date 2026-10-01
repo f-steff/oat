@@ -79,3 +79,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: bash ci/e2e-v1.sh
+
+  # Real opencode v2 end-to-end (installs @opencode/cli v2 + runs the v2 e2e).
+  # Linux and macOS: the v2 executable and per-OS discovery differ from v1.
+  v2-e2e:
+    name: v2-e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash ci/e2e-v2.sh
