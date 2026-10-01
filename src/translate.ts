@@ -86,6 +86,8 @@ export function mapV1PathToV2(pathname: string, method = "GET"): string | null {
     return `/api/session/${sub[1]}/${verb}`;
   }
   if (SESSION.test(pathname)) return `/api${pathname}`;
+  // v1 children (subagent sessions) -> the v2 session list filtered by parentID.
+  if (/^\/session\/[^/]+\/children$/.test(pathname)) return "/api/session";
   // A single message (and its parts) keeps its shape under `/api`.
   if (/^\/session\/[^/]+\/message\//.test(pathname)) return `/api${pathname}`;
   // Experimental routes keep their name under `/api`.
@@ -336,8 +338,12 @@ export function translateV2Response(v1Path: string, body: unknown, directory?: s
     return { all: list, default: {}, connected };
   }
   // Session lists and single sessions: lift `location.directory` to `directory`.
-  // `/experimental/session` is v1's global session list (mapped to `/api/session`).
-  const sessionList = v1Path === "/session" || v1Path === "/experimental/session";
+  // `/experimental/session` is v1's global session list (mapped to `/api/session`)
+  // and `/session/:id/children` is the parentID-filtered list.
+  const sessionList =
+    v1Path === "/session" ||
+    v1Path === "/experimental/session" ||
+    /^\/session\/[^/]+\/children$/.test(v1Path);
   if (sessionList && Array.isArray(unwrapped)) return unwrapped.map(translateV2Session);
   if (sessionList && asRecord(unwrapped)) return translateV2Session(unwrapped);
   if (/^\/session\/[^/]+$/.test(v1Path) && asRecord(unwrapped)) return translateV2Session(unwrapped);
@@ -514,7 +520,10 @@ export function translateV2Event(raw: unknown): V1Event | null {
   switch (type) {
     case "server.connected":
       return { type: "server.connected", properties: {} };
-    case "session.created": {
+    case "session.created":
+    case "session.updated": {
+      // The bridge decodes this into a full v1 `Session`, so provide every
+      // non-null field its model casts.
       const location = asRecord(data.location);
       return {
         type: "session.updated",
@@ -522,9 +531,11 @@ export function translateV2Event(raw: unknown): V1Event | null {
           sessionID,
           info: {
             id: sessionID,
+            slug: typeof data.slug === "string" ? data.slug : str(sessionID),
+            projectID: typeof data.projectID === "string" ? data.projectID : "",
+            directory: typeof location?.directory === "string" ? location.directory : "",
             title: data.title,
-            directory: location?.directory,
-            time: { created },
+            time: { created, updated: created },
           },
         },
       };
@@ -616,6 +627,9 @@ export function translateRequest(
   // `x-opencode-directory` has no v2 header; pass it as the `directory` query.
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   if (directory && !params.has("directory")) params.set("directory", directory);
+  // v1 `/session/:id/children` becomes the v2 list filtered by parentID.
+  const childId = /^\/session\/([^/]+)\/children$/.exec(pathname)?.[1];
+  if (childId && !params.has("parentID")) params.set("parentID", childId);
   const query = params.toString();
   const path = query ? `${mapped}?${query}` : mapped;
   // Prompt-ish bodies are reshaped; everything else passes through.

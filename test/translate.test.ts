@@ -38,6 +38,7 @@ test("mapV1PathToV2 maps the bridge's core routes", () => {
   assert.equal(mapV1PathToV2("/command"), "/api/command");
   assert.equal(mapV1PathToV2("/permission"), "/api/permission/request");
   assert.equal(mapV1PathToV2("/experimental/session"), "/api/session");
+  assert.equal(mapV1PathToV2("/session/ses_1/children"), "/api/session");
   assert.equal(mapV1PathToV2("/project/current"), "/api/location");
   assert.equal(mapV1PathToV2("/experimental/worktree"), "/api/worktree");
   // Unknown routes have no mapping.
@@ -109,6 +110,11 @@ test("translateRequest passes non-prompt bodies through and keeps existing query
   assert.equal(req.body, undefined);
 });
 
+test("translateRequest maps /session/:id/children to a parentID-filtered session list", () => {
+  const req = translateRequest("GET", "/session/ses_1/children", "", undefined, null);
+  assert.equal(req.path, "/api/session?parentID=ses_1");
+});
+
 test("translateV2Response maps v2 session reads to v1 shapes (fixtures)", () => {
   const list = translateV2Response("/session", fixture("session-list.json")) as Array<Record<string, unknown>>;
   assert.equal(list.length, 1);
@@ -128,6 +134,15 @@ test("translateV2Response maps v2 session reads to v1 shapes (fixtures)", () => 
   >;
   assert.equal(globalList[0]?.directory, "/");
   assert.equal(globalList[0]?.slug, globalList[0]?.id);
+
+  // `/session/:id/children` is the parentID-filtered list, same v1 shape.
+  const children = translateV2Response("/session/ses_1/children", {
+    location: {},
+    data: [{ id: "ses_c", projectID: "p", parentID: "ses_1", time: { created: 1, updated: 2 }, location: { directory: "/" } }],
+  }) as Array<Record<string, unknown>>;
+  assert.equal(children.length, 1);
+  assert.equal(children[0]?.slug, "ses_c");
+  assert.equal(children[0]?.directory, "/");
 });
 
 test("translateV2Message drops messages with no v1 equivalent (idle/system)", () => {
@@ -235,6 +250,12 @@ test("translateV2Events maps the captured v2 stream to v1 event types", () => {
         } else if (info?.role === "user") {
           assert.ok("agent" in info, "user info.agent");
           assert.ok("model" in info, "user info.model");
+        }
+      }
+      if (event.type === "session.updated") {
+        const info = event.properties.info as Record<string, unknown> | undefined;
+        for (const key of ["id", "slug", "projectID", "directory", "time"]) {
+          assert.ok(info && key in info, `session.updated info.${key}`);
         }
       }
       if (event.type === "message.part.updated") {
