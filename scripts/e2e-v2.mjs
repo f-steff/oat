@@ -6,7 +6,7 @@
 //
 // Run:  npm run build && node scripts/e2e-v2.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -160,7 +160,9 @@ async function readOneEvent(url, timeoutMs = 6_000) {
 }
 
 async function main() {
-  const base = mkdtempSync(path.join(os.tmpdir(), "oat-e2e-v2-"));
+  // Canonicalize: on macOS os.tmpdir() is /var/... but the real path is
+  // /private/var/..., which is what the server reports back.
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "oat-e2e-v2-")));
   const dir = path.join(base, "proj");
   mkdirSync(dir, { recursive: true });
 
