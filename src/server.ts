@@ -140,6 +140,33 @@ function eventDirectory(raw: unknown): string | undefined {
   return undefined;
 }
 
+/** Short-lived cache of translated message histories, invalidated by SSE events. */
+const messageCache = new Map<string, { at: number; body: Buffer }>();
+const MESSAGE_CACHE_MS = 5 * 60_000;
+const MESSAGE_CACHE_MAX = 64;
+
+/** Cache key for a session's message history (per backend + directory). */
+function messageCacheKey(backend: Backend, sessionId: string, directory: string | null): string {
+  return `${backend.port}\u0000${sessionId}\u0000${directory ?? ""}`;
+}
+
+/** Drop cached history for a session (its events mean it changed). */
+function invalidateSessionMessages(sessionId: string): void {
+  const needle = `\u0000${sessionId}\u0000`;
+  for (const key of [...messageCache.keys()]) {
+    if (key.includes(needle)) messageCache.delete(key);
+  }
+}
+
+/** The `data.sessionID` of a v2 event, when present. */
+function v2EventSessionId(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const data = (raw as Record<string, unknown>).data;
+  if (!data || typeof data !== "object") return undefined;
+  const id = (data as Record<string, unknown>).sessionID;
+  return typeof id === "string" ? id : undefined;
+}
+
 /** Write one merged SSE event downstream unless the response has already ended. */
 function writeEvent(res: http.ServerResponse, event: SseEvent, attribute: boolean): void {
   if (!res.writableEnded) res.write(formatSseEvent(event, { attribute }));
@@ -202,6 +229,8 @@ async function pumpOnce(
         continue;
       }
       const directory = eventDirectory(raw);
+      const sessionId = v2EventSessionId(raw);
+      if (sessionId) invalidateSessionMessages(sessionId);
       for (const mapped of translateV2Events(raw)) {
         // v1 SSE carries the OpenCode envelope `{directory, payload:{type,properties}}`;
         // the bridge's parser (and the mobile app) reject a bare `{type,properties}`.
@@ -398,8 +427,23 @@ async function handleTranslatedProxy(
   // fetch every page and translate the combined list.
   const messagesMatch = (req.method ?? "GET") === "GET" ? /^\/session\/([^/]+)\/message$/.exec(url.pathname) : null;
   if (messagesMatch?.[1]) {
-    const all = await fetchV2Messages(backend, messagesMatch[1], directory);
-    sendJson(res, 200, translateV2Response(url.pathname, { data: all }, directory));
+    const sessionId = messagesMatch[1];
+    const key = messageCacheKey(backend, sessionId, directory);
+    const hit = messageCache.get(key);
+    if (hit && Date.now() - hit.at < MESSAGE_CACHE_MS) {
+      res.writeHead(200, { "content-type": "application/json", "content-length": String(hit.body.length) });
+      res.end(hit.body);
+      return;
+    }
+    const all = await fetchV2Messages(backend, sessionId, directory);
+    const payload = Buffer.from(JSON.stringify(translateV2Response(url.pathname, { data: all }, directory)));
+    if (messageCache.size >= MESSAGE_CACHE_MAX) {
+      const oldest = messageCache.keys().next().value;
+      if (oldest !== undefined) messageCache.delete(oldest);
+    }
+    messageCache.set(key, { at: Date.now(), body: payload });
+    res.writeHead(200, { "content-type": "application/json", "content-length": String(payload.length) });
+    res.end(payload);
     return;
   }
 
