@@ -49,6 +49,13 @@ function opencodeExe() {
   return "opencode";
 }
 
+// `spawn` cannot execute a bare `opencode` on Windows (it is a `.cmd` shim), so use a shell then.
+function opencodeSpawn() {
+  const exe = opencodeExe();
+  const bare = !exe.includes("/") && !exe.includes("\\");
+  return { command: exe, shell: process.platform === "win32" && bare };
+}
+
 // Kill a process (and its tree on Windows) best-effort.
 function killTree(pid) {
   if (!pid) return;
@@ -94,11 +101,13 @@ process.on("SIGTERM", () => {
 // `env` points opencode at an isolated data/state/config dir so the real user DB is untouched.
 function startOpencode(port, cwd, logFile, env) {
   const fd = openSync(logFile, "w");
-  const child = spawn(opencodeExe(), ["serve", "--port", String(port)], {
+  const inv = opencodeSpawn();
+  const child = spawn(inv.command, ["serve", "--port", String(port)], {
     cwd,
     detached: true,
     stdio: ["ignore", fd, fd],
     windowsHide: true,
+    shell: inv.shell,
     env: { ...process.env, ...env },
   });
   child.unref();
