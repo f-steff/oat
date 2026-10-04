@@ -6,7 +6,7 @@
 //
 // Run:  npm run build && node scripts/e2e.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -89,13 +89,15 @@ process.on("SIGTERM", () => {
 });
 
 // Start one throwaway opencode server in its own directory, logging to a file.
-function startOpencode(port, cwd, logFile) {
+// `env` points opencode at an isolated data/state/config dir so the real user DB is untouched.
+function startOpencode(port, cwd, logFile, env) {
   const fd = openSync(logFile, "w");
   const child = spawn(opencodeExe(), ["serve", "--port", String(port)], {
     cwd,
     detached: true,
     stdio: ["ignore", fd, fd],
     windowsHide: true,
+    env: { ...process.env, ...env },
   });
   child.unref();
   children.push(child);
@@ -158,16 +160,26 @@ async function readOneEvent(url, timeoutMs = 4_000) {
 }
 
 async function main() {
-  const base = mkdtempSync(path.join(os.tmpdir(), "oat-e2e-"));
+  // Canonicalize: on macOS os.tmpdir() is /var/... but the real path is /private/var/...,
+  // which is what the server reports back (so directory routing must compare the same form).
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "oat-e2e-")));
   const dirs = [path.join(base, "a"), path.join(base, "b")];
   for (const dir of dirs) mkdirSync(dir, { recursive: true });
+  // Keep opencode's data/state/config under the temp dir so the real user DB is never touched
+  // (v2 migrates it one-way; v1 must not run against a v2-migrated DB).
+  const serverEnv = {
+    XDG_DATA_HOME: path.join(base, "data"),
+    XDG_STATE_HOME: path.join(base, "state"),
+    XDG_CONFIG_HOME: path.join(base, "config"),
+    OPENCODE_DB: path.join(base, "opencode.db"),
+  };
 
   console.log("[1] starting two real opencode servers (sequentially, to avoid a first-run DB migration race)");
   console.log(`    using exe: ${opencodeExe()}`);
   const logs = [path.join(base, "a.log"), path.join(base, "b.log")];
-  startOpencode(PORTS[0], dirs[0], logs[0]);
+  startOpencode(PORTS[0], dirs[0], logs[0], serverEnv);
   const healthyA = await waitHealth(PORTS[0]);
-  startOpencode(PORTS[1], dirs[1], logs[1]);
+  startOpencode(PORTS[1], dirs[1], logs[1], serverEnv);
   const healthyB = await waitHealth(PORTS[1]);
   const healthy = [healthyA, healthyB];
   check("both opencode servers healthy", healthy.every(Boolean), PORTS.map((p, i) => `${p}:${healthy[i]}`).join(" "));

@@ -68,9 +68,14 @@ jobs:
       - run: bash ci/lint.sh
 
   # Real opencode v1 end-to-end (installs opencode-ai v1 + runs the e2e).
+  # Linux and macOS: the v1 executable and per-OS discovery differ from v2.
   v1-e2e:
-    name: v1-e2e
-    runs-on: ubuntu-latest
+    name: v1-e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
