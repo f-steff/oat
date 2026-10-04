@@ -67,15 +67,30 @@ jobs:
       - run: bash ci/test.sh
       - run: bash ci/lint.sh
 
+  # Windows is a first-class target; cover build + test + lint here too.
+  windows:
+    name: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash ci/build.sh
+      - run: bash ci/test.sh
+      - run: bash ci/lint.sh
+
   # Real opencode v1 end-to-end (installs opencode-ai v1 + runs the e2e).
-  # Linux and macOS: the v1 executable and per-OS discovery differ from v2.
+  # All three OSes: the v1 executable and per-OS discovery differ.
   v1-e2e:
     name: v1-e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -86,14 +101,14 @@ jobs:
       - run: bash ci/e2e-v1.sh
 
   # Real opencode v2 end-to-end (installs @opencode/cli v2 + runs the v2 e2e).
-  # Linux and macOS: the v2 executable and per-OS discovery differ from v1.
+  # All three OSes: the v2 executable and per-OS discovery differ.
   v2-e2e:
     name: v2-e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
