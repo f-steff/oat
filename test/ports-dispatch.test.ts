@@ -29,7 +29,7 @@ test("listListeners(win32) dispatches to PowerShell and parses output", async ()
 // macOS dispatch should use lsof and parse its LISTEN line.
 test("listListeners(darwin) dispatches to lsof", async () => {
   const runner: Runner = async (file) => {
-    if (file === "lsof") return "Python    60400 fsteff    3u  IPv4 0x1      0t0  TCP 127.0.0.1:46123 (LISTEN)";
+    if (file === "lsof") return "Python    60400 user    3u  IPv4 0x1      0t0  TCP 127.0.0.1:46123 (LISTEN)";
     return "";
   };
   const rows = await listListeners({ platform: "darwin", runner });

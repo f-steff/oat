@@ -32,12 +32,14 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  -- " + detail : ""}`);
 }
 
-// Resolve the real opencode executable (env override, known npm path, or PATH).
+// Resolve the real opencode v1 executable (env override, npm global, or PATH).
 function opencodeExe() {
+  const appData = process.env.APPDATA ?? "";
   const candidates = [
     process.env.OPENCODE_BIN,
     process.env.OPENCODE_EXE,
-    "C:\\Users\\DKfls\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
+    path.join(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe"),
+    path.join(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode"),
     "opencode",
   ];
   for (const candidate of candidates) {
