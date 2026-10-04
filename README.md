@@ -14,8 +14,10 @@ connection drives **all your independent opencode instances** at once — withou
 shared server (no MCP bleed, independent lifecycles). `sesori-bridge` attaches to one fixed port; OAT
 routes each request to the right instance.
 
+- Install guide: [`INSTALL.md`](INSTALL.md)
 - Design: [`DESIGN.md`](DESIGN.md)
 - Testing & troubleshooting: [`TESTING.md`](TESTING.md)
+- Developer setup (incl. remote test machines over SSH): [`DEVELOPING.md`](DEVELOPING.md)
 
 ---
 
@@ -30,6 +32,9 @@ routes each request to the right instance.
 No compiler or native build tools are needed — the only dependencies are dev-time (TypeScript, ESLint).
 
 ## Install
+
+For step-by-step, per-OS instructions that also cover **opencode** (v1 and v2) and **sesori-bridge**, see
+[`INSTALL.md`](INSTALL.md). From source:
 
 ```bash
 git clone https://github.com/f-steff/oat.git
