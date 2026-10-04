@@ -212,6 +212,8 @@ async function main() {
   const byPort = new Map(discovered.map((b) => [b.port, b]));
   check("discovery found server A", byPort.has(PORTS[0]), byPort.get(PORTS[0])?.primaryDirectory ?? "");
   check("discovery found server B", byPort.has(PORTS[1]), byPort.get(PORTS[1])?.primaryDirectory ?? "");
+  console.log(`    raw dirs: ${dirs.map((d) => JSON.stringify(d)).join(" | ")}`);
+  console.log(`    backends: ${[...byPort.values()].map((b) => `${b.port}:${JSON.stringify(b.primaryDirectory)}`).join(" | ")}`);
 
   console.log("\n[3] routing through the mux");
   const registry = new Registry();
@@ -224,10 +226,13 @@ async function main() {
   const health = await (await fetch(`${baseUrl}/global/health`)).json();
   check("mux health", health.healthy === true && String(health.version).startsWith("oat/"), JSON.stringify(health));
 
-  // `/path` with a directory header must be served by the matching backend.
-  const pathA = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": dirs[0] } });
+  // `/path` with a directory header must be served by the matching backend. Send the
+  // directory the server reported (what a real client echoes back), not our own form.
+  const routeDirA = byPort.get(PORTS[0])?.primaryDirectory ?? dirs[0];
+  const routeDirB = byPort.get(PORTS[1])?.primaryDirectory ?? dirs[1];
+  const pathA = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": routeDirA } });
   check("dir A routes to server A", pathA.headers.get("x-oat-backend") === String(PORTS[0]), `via=${pathA.headers.get("x-oat-backend")}`);
-  const pathB = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": dirs[1] } });
+  const pathB = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": routeDirB } });
   check("dir B routes to server B", pathB.headers.get("x-oat-backend") === String(PORTS[1]), `via=${pathB.headers.get("x-oat-backend")}`);
 
   // Global reads come from the shared DB through the mux.
