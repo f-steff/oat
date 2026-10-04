@@ -1,0 +1,67 @@
+name: Release
+
+# Releases are cut from `main`. Bump the version in package.json and merge; this
+# workflow creates the matching tag (`v<version>`) with a GitHub Release and the
+# npm tarball attached. If the tag already exists the run is a no-op, so ordinary
+# merges to main do not re-release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: bash ci/build.sh
+      - run: bash ci/test.sh
+      - run: bash ci/lint.sh
+
+      - name: Resolve version and check for an existing tag
+        id: v
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "A release for v$VERSION already exists; skipping."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will release v$VERSION."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the npm tarball
+        if: steps.v.outputs.exists == 'false'
+        run: npm pack
+
+      - name: Create the GitHub Release
+        if: steps.v.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes \
+            ./*.tgz
+
+      # Publishing to npm is intentionally not wired up yet:
+      #   * `package.json` is `"private": true`, and
+      #   * the name `oat` is already taken on npm.
+      # Once a name/scope is chosen, set `private` to false and add a publish step
+      # guarded by an `NPM_TOKEN` secret (e.g. `npm publish --provenance --access public`).

@@ -25,6 +25,13 @@
   "bin": {
     "oat": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "INSTALL.md",
+    "DESIGN.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
