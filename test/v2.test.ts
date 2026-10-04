@@ -43,6 +43,51 @@ function startV2(directory: string): Promise<{ server: http.Server; port: number
   });
 }
 
+/**
+ * Start a fake v2 server whose **first** `/api/location` is delayed, to simulate a
+ * cold backend that resolves its location slowly while `/api/info` answers instantly.
+ * Subsequent location calls respond immediately (as a warm cache would).
+ */
+function startV2Cold(directory: string, firstDelayMs: number): Promise<{ server: http.Server; port: number }> {
+  const expected = basicAuth(PASSWORD);
+  let first = true;
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.headers.authorization !== expected) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      if (url.pathname === "/api/info") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ version: "2.0.20", pid: 42 }));
+        return;
+      }
+      if (url.pathname === "/api/location") {
+        const send = () => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ directory }));
+        };
+        if (first) {
+          first = false;
+          setTimeout(send, firstDelayMs);
+        } else {
+          send();
+        }
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      resolve({ server, port });
+    });
+  });
+}
+
 test("basicAuth builds the opencode:password Basic value", () => {
   const expected = `Basic ${Buffer.from("opencode:secret").toString("base64")}`;
   assert.equal(basicAuth("secret"), expected);
@@ -92,6 +137,29 @@ test("probeV2Endpoint builds a v2 backend from a known endpoint", async (t) => {
   assert.equal(backend?.password, PASSWORD);
   assert.equal(backend?.primaryDirectory, "C:\\work\\proj");
   assert.equal(backend?.version, "2.0.15");
+});
+
+test("path probe tolerates a cold v2 location slower than the health timeout", async (t) => {
+  const { server, port } = await startV2Cold("C:\\work\\cold", 1_100);
+  t.after(() => server.close());
+  // The first location takes ~1.1s, beyond a 1s health budget but within the path budget.
+  const probe = makeHttpProbe(1_000, { v2Password: PASSWORD });
+  assert.equal(await probe.path(`http://127.0.0.1:${port}`, "v2"), "C:\\work\\cold");
+});
+
+test("path probe retries once when the first location attempt times out", async (t) => {
+  const { server, port } = await startV2Cold("C:\\work\\retry", 600);
+  t.after(() => server.close());
+  // First attempt aborts at 200ms; the retry hits the already-warm server and returns fast.
+  const probe = makeHttpProbe(1_000, { v2Password: PASSWORD, pathTimeoutMs: 200 });
+  assert.equal(await probe.path(`http://127.0.0.1:${port}`, "v2"), "C:\\work\\retry");
+});
+
+test("probeV2Endpoint tolerates a cold v2 location", async (t) => {
+  const { server, port } = await startV2Cold("C:\\work\\cold-endpoint", 1_100);
+  t.after(() => server.close());
+  const backend = await probeV2Endpoint(`http://127.0.0.1:${port}`, PASSWORD);
+  assert.equal(backend?.primaryDirectory, "C:\\work\\cold-endpoint");
 });
 
 test("readV2Service reads url+password from the service registration", async (t) => {

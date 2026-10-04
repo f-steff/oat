@@ -45,16 +45,51 @@ async function getJson(url: string, timeoutMs: number, password?: string): Promi
   }
 }
 
+/**
+ * Default budget for a backend's directory probe (`/path` / `/api/location`).
+ * A cold v2 server can spend a couple of seconds resolving its first location,
+ * and the health probe does not touch that path, so this is intentionally more
+ * generous than the (fast) health timeout.
+ */
+const DEFAULT_PATH_TIMEOUT_MS = 3_000;
+
+/** Sleep for `ms` milliseconds (used between directory-probe attempts). */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Run a directory probe; if it yields nothing, wait briefly and try once more.
+ * A cold v2 backend can exceed the probe budget on its first location lookup,
+ * after which the (now warm) second call is fast.
+ */
+async function retryOnce<T>(read: () => Promise<T | null>): Promise<T | null> {
+  const first = await read();
+  if (first != null) return first;
+  await delay(150);
+  return read();
+}
+
+/** Read a v2 server's own directory (`GET /api/location`), tolerating `{data:{...}}`. */
+async function readV2Directory(baseUrl: string, password: string, timeoutMs: number): Promise<string | null> {
+  const info = asRecord(await getJson(`${baseUrl}/api/location`, timeoutMs, password));
+  const directory = info?.directory ?? asRecord(info?.data)?.directory;
+  return typeof directory === "string" ? directory : null;
+}
+
 /** Options for the default HTTP probe. */
 export interface HttpProbeOptions {
   /** Password used to authenticate against v2 servers (`OAT_V2_PASSWORD`). */
   v2Password?: string;
   /** Password used to authenticate against v1 servers (`OPENCODE_SERVER_PASSWORD`). */
   v1Password?: string;
+  /** Timeout for the directory probe; defaults to {@link DEFAULT_PATH_TIMEOUT_MS} (3000ms). */
+  pathTimeoutMs?: number;
 }
 
 /** Build the default HTTP probe: v1 `/global/health` + `/path`, v2 `/api/info` + `/api/location`. */
 export function makeHttpProbe(timeoutMs = 1_000, options: HttpProbeOptions = {}): Probe {
+  const pathTimeoutMs = options.pathTimeoutMs ?? DEFAULT_PATH_TIMEOUT_MS;
   return {
     // v1 answers `{healthy:true, version}`; otherwise try v2's `/api/info` with Basic auth.
     async health(baseUrl) {
@@ -76,15 +111,19 @@ export function makeHttpProbe(timeoutMs = 1_000, options: HttpProbeOptions = {})
       return null;
     },
     // The un-headered v1 `/path` (or v2 `/api/location`) names the server's own directory.
+    // It gets a longer budget than health plus one retry, because a cold v2 backend can
+    // spend a couple of seconds resolving its first location (`/api/info` stays instant).
     async path(baseUrl, kind) {
-      if (kind === "v2") {
-        if (!options.v2Password) return null;
-        const info = asRecord(await getJson(`${baseUrl}/api/location`, timeoutMs, options.v2Password));
-        const directory = info?.directory ?? asRecord(info?.data)?.directory;
-        return typeof directory === "string" ? directory : null;
-      }
-      const json = asRecord(await getJson(`${baseUrl}/path`, timeoutMs, options.v1Password));
-      return typeof json?.directory === "string" ? json.directory : null;
+      const read = (): Promise<string | null> => {
+        if (kind === "v2") {
+          return options.v2Password ? readV2Directory(baseUrl, options.v2Password, pathTimeoutMs) : Promise.resolve(null);
+        }
+        return getJson(`${baseUrl}/path`, pathTimeoutMs, options.v1Password).then((json) => {
+          const directory = asRecord(json)?.directory;
+          return typeof directory === "string" ? directory : null;
+        });
+      };
+      return retryOnce(read);
     },
   };
 }
@@ -174,11 +213,11 @@ export async function probeV2Endpoint(
   password: string,
   timeoutMs = 1_000,
   now: () => number = Date.now,
+  pathTimeoutMs = DEFAULT_PATH_TIMEOUT_MS,
 ): Promise<Backend | null> {
   const info = asRecord(await getJson(`${baseUrl}/api/info`, timeoutMs, password));
   if (!info || typeof info.version !== "string") return null;
-  const location = asRecord(await getJson(`${baseUrl}/api/location`, timeoutMs, password));
-  const primaryDirectory = typeof location?.directory === "string" ? location.directory : null;
+  const primaryDirectory = await retryOnce(() => readV2Directory(baseUrl, password, pathTimeoutMs));
   // OAT's own maintenance/anchor v2 servers are never user projects.
   if (isOatAnchorDir(primaryDirectory)) return null;
   let port = 0;
