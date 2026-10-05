@@ -6,7 +6,7 @@ This guide installs the three pieces OAT ties together:
 |---|---|---|
 | **opencode** | the coding agent you drive | npm (`opencode-ai@1` **or** `@opencode/cli@2`) or Homebrew |
 | **sesori-bridge** | connects the Sesori phone app to opencode | Sesori install script / npm bootstrap |
-| **OAT** | one endpoint that muxes all your opencode instances | this repository (a release package is planned) |
+| **OAT** | one endpoint that muxes all your opencode instances | npm `@f-steff/oat` (once released) or this repository |
 
 OAT runs on **Windows, macOS and Linux**, and works with **opencode v1 or v2**. To install and use OAT
 itself you need **Node.js ≥ 20**, **npm** and **git**.
@@ -77,7 +77,14 @@ The npm bootstrap `npx @sesori/bridge` installs the same managed runtime. See th
 
 ## 4. Install OAT
 
-Until OAT is published, install from source (this is the only supported method today):
+When the package is available on npm:
+
+```bash
+npm install -g @f-steff/oat
+oat version        # expect: 0.2.0
+```
+
+Otherwise (or to work on OAT itself), install from source:
 
 ```bash
 git clone https://github.com/f-steff/oat.git

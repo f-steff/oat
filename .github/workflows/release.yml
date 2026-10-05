@@ -1,9 +1,9 @@
 name: Release
 
 # Releases are cut from `main`. Bump the version in package.json and merge; this
-# workflow creates the matching tag (`v<version>`) with a GitHub Release and the
-# npm tarball attached. If the tag already exists the run is a no-op, so ordinary
-# merges to main do not re-release.
+# workflow verifies the build, creates the matching tag (`v<version>`) with a
+# GitHub Release + npm tarball, then publishes to npm. If the tag already exists
+# the release job is a no-op, so ordinary merges do not re-release.
 on:
   push:
     branches: [main]
@@ -16,6 +16,8 @@ jobs:
   release:
     name: release
     runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.v.outputs.exists == 'false' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,8 +62,48 @@ jobs:
             --generate-notes \
             ./*.tgz
 
-      # Publishing to npm is intentionally not wired up yet:
-      #   * `package.json` is `"private": true`, and
-      #   * the name `oat` is already taken on npm.
-      # Once a name/scope is chosen, set `private` to false and add a publish step
-      # guarded by an `NPM_TOKEN` secret (e.g. `npm publish --provenance --access public`).
+  # Publish to npm. Runs when a new release was cut (or on manual dispatch for a
+  # retry), and only actually publishes when the version is not already on npm
+  # and the NPM_TOKEN secret is set.
+  publish-npm:
+    name: publish to npm
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: bash ci/build.sh
+
+      - name: Check whether this version is already on npm
+        id: npm
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "@f-steff/oat@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::@f-steff/oat@$VERSION is already published; nothing to do."
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' && steps.npm.outputs.needs_publish == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Notice when the token is missing
+        if: ${{ env.NPM_TOKEN == '' && steps.npm.outputs.needs_publish == 'true' }}
+        run: echo "::warning::NPM_TOKEN is not set; skipping npm publish for @f-steff/oat@${{ steps.npm.outputs.version }} (the GitHub Release was still cut)."
