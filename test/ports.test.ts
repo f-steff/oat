@@ -36,7 +36,7 @@ test("parseProcNetTcp keeps LISTEN rows and decodes hex ports", () => {
 
 // lsof parsing reads the PID column and the NAME column before "(LISTEN)".
 test("parseLsof parses a macOS LISTEN line", () => {
-  const out = "Python    60400 fsteff    3u  IPv4 0x1234      0t0  TCP 127.0.0.1:46123 (LISTEN)";
+  const out = "Python    60400 user    3u  IPv4 0x1234      0t0  TCP 127.0.0.1:46123 (LISTEN)";
   const rows = parseLsof(out);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.port, 46123);

@@ -17,6 +17,8 @@ export interface OatState {
   startedAt: number;
   /** Bearer token required by the control API. */
   token: string;
+  /** Shared password for v2 backends (`OPENCODE_SERVER_PASSWORD`), so every CLI agrees. */
+  v2Password?: string;
 }
 
 /** Absolute path of the state file inside a state directory. */
@@ -41,6 +43,7 @@ export async function readState(stateDir: string): Promise<OatState | null> {
       version: typeof parsed.version === "string" ? parsed.version : "0",
       startedAt: typeof parsed.startedAt === "number" ? parsed.startedAt : 0,
       token: parsed.token,
+      ...(typeof parsed.v2Password === "string" ? { v2Password: parsed.v2Password } : {}),
     };
   } catch {
     return null;

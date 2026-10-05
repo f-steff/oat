@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import os from "node:os";
+import zlib from "node:zlib";
 import { test } from "node:test";
 
 import { defaultConfig } from "../src/config.js";
@@ -98,6 +99,56 @@ test("proxy strips Authorization, forwards query + directory, streams response",
   assert.equal(captured.headers["authorization"], undefined);
   assert.equal(captured.headers["x-custom"], "kept");
   assert.equal(captured.headers["x-opencode-directory"], "C:\\proj");
+});
+
+// The bridge's HTTP client sends `Accept-Encoding: gzip`; the v2 backend may gzip
+// its JSON. OAT must decode it and still translate (a silent parse failure would
+// leak the raw v2 envelope to the bridge).
+test("translated proxy decodes a gzipped v2 response", async (t) => {
+  const captured: http.IncomingHttpHeaders[] = [];
+  const backend = await new Promise<{ server: http.Server; port: number }>((resolve) => {
+    const server = http.createServer((req, res) => {
+      captured.push(req.headers);
+      const body = JSON.stringify({
+        location: { directory: "/p" },
+        data: [{ id: "ses_1", projectID: "p", time: { created: 1, updated: 1 }, title: "t", location: { directory: "/p" } }],
+      });
+      if (String(req.headers["accept-encoding"] ?? "").includes("gzip")) {
+        res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
+        res.end(zlib.gzipSync(body));
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(body);
+      }
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve({ server, port: typeof address === "object" && address ? address.port : 0 });
+    });
+  });
+
+  const registry = new Registry();
+  registry.set([{ ...backendFor(backend.port, "/p"), kind: "v2", password: "pw" }]);
+  const config = defaultConfig({ port: 0, stateDir: os.tmpdir() });
+  const server = createMuxServer({ config, registry });
+  const port = await listen(server);
+  t.after(async () => {
+    await close(server);
+    await close(backend.server);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/experimental/session`, {
+    headers: { "x-opencode-directory": "/p", "accept-encoding": "gzip" },
+  });
+  assert.equal(response.status, 200);
+  // OAT returns identity bytes, and a v1 array (not the raw `{data}` envelope).
+  assert.equal(response.headers.get("content-encoding"), null);
+  const body = (await response.json()) as Array<Record<string, unknown>>;
+  assert.ok(Array.isArray(body), "expected a translated array");
+  assert.equal(body[0]?.slug, "ses_1");
+  assert.equal(body[0]?.location, undefined);
+  // The backend must have been asked for identity, not gzip.
+  assert.equal(captured.at(-1)?.["accept-encoding"], undefined);
 });
 
 // An upstream error status must pass through unchanged.

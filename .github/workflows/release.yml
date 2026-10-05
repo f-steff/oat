@@ -1,0 +1,109 @@
+name: Release
+
+# Releases are cut from `main`. Bump the version in package.json and merge; this
+# workflow verifies the build, creates the matching tag (`v<version>`) with a
+# GitHub Release + npm tarball, then publishes to npm. If the tag already exists
+# the release job is a no-op, so ordinary merges do not re-release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.v.outputs.exists == 'false' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: bash ci/build.sh
+      - run: bash ci/test.sh
+      - run: bash ci/lint.sh
+
+      - name: Resolve version and check for an existing tag
+        id: v
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "A release for v$VERSION already exists; skipping."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will release v$VERSION."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the npm tarball
+        if: steps.v.outputs.exists == 'false'
+        run: npm pack
+
+      - name: Create the GitHub Release
+        if: steps.v.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes \
+            ./*.tgz
+
+  # Publish to npm. Runs when a new release was cut (or on manual dispatch for a
+  # retry), and only actually publishes when the version is not already on npm
+  # and the NPM_TOKEN secret is set.
+  publish-npm:
+    name: publish to npm
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: bash ci/build.sh
+
+      - name: Check whether this version is already on npm
+        id: npm
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "@f-steff/oat@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice::@f-steff/oat@$VERSION is already published; nothing to do."
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' && steps.npm.outputs.needs_publish == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Notice when the token is missing
+        if: ${{ env.NPM_TOKEN == '' && steps.npm.outputs.needs_publish == 'true' }}
+        run: echo "::warning::NPM_TOKEN is not set; skipping npm publish for @f-steff/oat@${{ steps.npm.outputs.version }} (the GitHub Release was still cut)."

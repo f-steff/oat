@@ -6,7 +6,7 @@
 //
 // Run:  npm run build && node scripts/e2e.mjs
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -32,12 +32,14 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  -- " + detail : ""}`);
 }
 
-// Resolve the real opencode executable (env override, known npm path, or PATH).
+// Resolve the real opencode v1 executable (env override, npm global, or PATH).
 function opencodeExe() {
+  const appData = process.env.APPDATA ?? "";
   const candidates = [
     process.env.OPENCODE_BIN,
     process.env.OPENCODE_EXE,
-    "C:\\Users\\DKfls\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
+    path.join(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe"),
+    path.join(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode"),
     "opencode",
   ];
   for (const candidate of candidates) {
@@ -45,6 +47,13 @@ function opencodeExe() {
     if (candidate === "opencode" || existsSync(candidate)) return candidate;
   }
   return "opencode";
+}
+
+// `spawn` cannot execute a bare `opencode` on Windows (it is a `.cmd` shim), so use a shell then.
+function opencodeSpawn() {
+  const exe = opencodeExe();
+  const bare = !exe.includes("/") && !exe.includes("\\");
+  return { command: exe, shell: process.platform === "win32" && bare };
 }
 
 // Kill a process (and its tree on Windows) best-effort.
@@ -89,13 +98,17 @@ process.on("SIGTERM", () => {
 });
 
 // Start one throwaway opencode server in its own directory, logging to a file.
-function startOpencode(port, cwd, logFile) {
+// `env` points opencode at an isolated data/state/config dir so the real user DB is untouched.
+function startOpencode(port, cwd, logFile, env) {
   const fd = openSync(logFile, "w");
-  const child = spawn(opencodeExe(), ["serve", "--port", String(port)], {
+  const inv = opencodeSpawn();
+  const child = spawn(inv.command, ["serve", "--port", String(port)], {
     cwd,
     detached: true,
     stdio: ["ignore", fd, fd],
     windowsHide: true,
+    shell: inv.shell,
+    env: { ...process.env, ...env },
   });
   child.unref();
   children.push(child);
@@ -158,16 +171,28 @@ async function readOneEvent(url, timeoutMs = 4_000) {
 }
 
 async function main() {
-  const base = mkdtempSync(path.join(os.tmpdir(), "oat-e2e-"));
+  // Canonicalize: on macOS os.tmpdir() is /var/... but the real path is /private/var/...,
+  // which is what the server reports back (so directory routing must compare the same form).
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), "oat-e2e-")));
   const dirs = [path.join(base, "a"), path.join(base, "b")];
   for (const dir of dirs) mkdirSync(dir, { recursive: true });
+  // Keep opencode's data/state/config under the temp dir so the real user DB is never touched
+  // (v2 migrates it one-way; v1 must not run against a v2-migrated DB).
+  const serverEnv = {
+    XDG_DATA_HOME: path.join(base, "data"),
+    XDG_STATE_HOME: path.join(base, "state"),
+    XDG_CONFIG_HOME: path.join(base, "config"),
+    OPENCODE_DB: path.join(base, "opencode.db"),
+  };
 
-  console.log("[1] starting two real opencode servers");
+  console.log("[1] starting two real opencode servers (sequentially, to avoid a first-run DB migration race)");
   console.log(`    using exe: ${opencodeExe()}`);
   const logs = [path.join(base, "a.log"), path.join(base, "b.log")];
-  startOpencode(PORTS[0], dirs[0], logs[0]);
-  startOpencode(PORTS[1], dirs[1], logs[1]);
-  const healthy = await Promise.all(PORTS.map((port) => waitHealth(port)));
+  startOpencode(PORTS[0], dirs[0], logs[0], serverEnv);
+  const healthyA = await waitHealth(PORTS[0]);
+  startOpencode(PORTS[1], dirs[1], logs[1], serverEnv);
+  const healthyB = await waitHealth(PORTS[1]);
+  const healthy = [healthyA, healthyB];
   check("both opencode servers healthy", healthy.every(Boolean), PORTS.map((p, i) => `${p}:${healthy[i]}`).join(" "));
   if (!healthy.every(Boolean)) {
     // Surface the server logs to explain why a startup failed.
@@ -187,6 +212,8 @@ async function main() {
   const byPort = new Map(discovered.map((b) => [b.port, b]));
   check("discovery found server A", byPort.has(PORTS[0]), byPort.get(PORTS[0])?.primaryDirectory ?? "");
   check("discovery found server B", byPort.has(PORTS[1]), byPort.get(PORTS[1])?.primaryDirectory ?? "");
+  console.log(`    raw dirs: ${dirs.map((d) => JSON.stringify(d)).join(" | ")}`);
+  console.log(`    backends: ${[...byPort.values()].map((b) => `${b.port}:${JSON.stringify(b.primaryDirectory)}`).join(" | ")}`);
 
   console.log("\n[3] routing through the mux");
   const registry = new Registry();
@@ -199,10 +226,13 @@ async function main() {
   const health = await (await fetch(`${baseUrl}/global/health`)).json();
   check("mux health", health.healthy === true && String(health.version).startsWith("oat/"), JSON.stringify(health));
 
-  // `/path` with a directory header must be served by the matching backend.
-  const pathA = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": dirs[0] } });
+  // `/path` with a directory header must be served by the matching backend. Send the
+  // directory the server reported (what a real client echoes back), not our own form.
+  const routeDirA = byPort.get(PORTS[0])?.primaryDirectory ?? dirs[0];
+  const routeDirB = byPort.get(PORTS[1])?.primaryDirectory ?? dirs[1];
+  const pathA = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": routeDirA } });
   check("dir A routes to server A", pathA.headers.get("x-oat-backend") === String(PORTS[0]), `via=${pathA.headers.get("x-oat-backend")}`);
-  const pathB = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": dirs[1] } });
+  const pathB = await fetch(`${baseUrl}/path`, { headers: { "x-opencode-directory": routeDirB } });
   check("dir B routes to server B", pathB.headers.get("x-oat-backend") === String(PORTS[1]), `via=${pathB.headers.get("x-oat-backend")}`);
 
   // Global reads come from the shared DB through the mux.
