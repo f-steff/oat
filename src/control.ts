@@ -58,6 +58,8 @@ export async function callControl(
   // Present the bearer token and decode JSON when possible, falling back to text.
   const response = await fetch(`${baseUrl}${OAT_CONTROL_PREFIX}${route}`, {
     method,
+    // Never let a stuck daemon hang the CLI.
+    signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: `Bearer ${token}`,
       ...(payload !== undefined ? { "content-type": "application/json" } : {}),
