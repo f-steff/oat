@@ -75,6 +75,11 @@ sesori-bridge --version
 The npm bootstrap `npx @sesori/bridge` installs the same managed runtime. See the upstream
 `bridge/INSTALL.md` for details (install locations, update track, headless/VM notes).
 
+> **Bridge versions and OAT translation.** Sesori Bridge **1.9.1+** speaks opencode v2 natively and talks
+> straight to the v2 server through OAT (it uses `/api/*`). Bridge **≤ 1.9.0** is v1-only and relies on
+> OAT's v1↔v2 translation. Keep translation enabled (the default) if you may run an older bridge — it has
+> no effect on 1.9.1+.
+
 ## 4. Install OAT
 
 When the package is available on npm:

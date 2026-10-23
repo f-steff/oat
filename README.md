@@ -92,8 +92,13 @@ Default port is `OPENCODE_PORT` or **4096**. OAT and the bridge must use the sam
 
 OAT works with **whichever opencode generation is installed**. It detects each backend's generation (v1
 answers `/global/health`; v2 answers `/api/info` behind HTTP Basic auth), tags it, and routes per project
-directory. Because the Sesori bridge speaks v1, OAT also translates v1↔v2, so the phone can drive v2
-instances with **no bridge change**.
+directory.
+
+**Bridge versions:** Sesori Bridge **1.9.1+** speaks opencode v2 natively — it probes `/api/info` and uses
+`/api/*` — so it communicates **straight with the v2 backend** through OAT, with no translation. Bridge
+**≤ 1.9.0** is v1-only and relies on OAT's v1↔v2 translation. Keep translation enabled
+(`OAT_TRANSLATE_V2_TO_V1_BRIDGE=1`, the default) if you may run an older bridge; it has no effect on
+v2-native clients.
 
 ```bash
 oat start                     # one OAT daemon
@@ -109,9 +114,9 @@ oat sesori-bridge             # the bridge reaches them through OAT
   `OPENCODE_SERVER_PASSWORD`.
 - **`oat status`** reports the generation; **`oat list`** shows each backend's `KIND`.
 - **Translation** (`OAT_TRANSLATE_V2_TO_V1_BRIDGE`, on by default): **v1-path** requests are mapped onto v2 `/api/*` and
-  their responses translated back to v1 shapes, while **`/api/*` requests always pass straight through** —
-  so a v1-shaped client and a v2-native client (which probes `/api/info`) both work against the same v2
-  backend.
+  their responses translated back to v1 shapes, while **`/api/*` requests always pass straight through**.
+  This is what serves a **v1-only bridge (≤ 1.9.0)**; a **1.9.1+ bridge** uses `/api/*` and therefore
+  bypasses translation entirely. Both shapes can use the same v2 backend.
 
 The v2 path is newer and less battle-tested than v1; see Known limitations.
 
