@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import { defaultConfig } from "../src/config.js";
@@ -15,7 +16,7 @@ function makeDeps(opts: { healthy?: boolean } = {}) {
   let nextPid = 100;
   const registry = new Registry();
   const supervisor = new BackendSupervisor({
-    config: defaultConfig({ port: 0, stateDir: os.tmpdir(), idleShutdownMs: 1_000 }),
+    config: defaultConfig({ port: 0, stateDir: os.tmpdir(), idleShutdownMs: 1_000, backendVersion: "v1" }),
     registry,
     // Record spawns and hand out predictable pids.
     spawnBackend: (port) => {
@@ -163,7 +164,7 @@ test("supervisor launches a terminal and adopts the discovered backend", async (
   const registry = new Registry();
   const launched: string[] = [];
   const supervisor = new BackendSupervisor({
-    config: defaultConfig({ port: 0, stateDir: os.tmpdir() }),
+    config: defaultConfig({ port: 0, stateDir: os.tmpdir(), backendVersion: "v1" }),
     registry,
     launchTerminal: true,
     // Fake the command builder and the launcher so no window is actually opened.
@@ -203,7 +204,7 @@ test("an already-launched directory is never backed by a hidden duplicate", asyn
   const registry = new Registry();
   let launchCount = 0;
   const supervisor = new BackendSupervisor({
-    config: defaultConfig({ port: 0, stateDir: os.tmpdir() }),
+    config: defaultConfig({ port: 0, stateDir: os.tmpdir(), backendVersion: "v1" }),
     registry,
     launchTerminal: true,
     launchSpec: (directory) => ({ command: "fake-terminal", args: [directory] }),
@@ -229,7 +230,7 @@ test("a gone launched instance is reopened after the grace window", async () => 
   const time = { t: 1_000 };
   let launches = 0;
   const supervisor = new BackendSupervisor({
-    config: defaultConfig({ port: 0, stateDir: os.tmpdir() }),
+    config: defaultConfig({ port: 0, stateDir: os.tmpdir(), backendVersion: "v1" }),
     registry,
     launchTerminal: true,
     launchSpec: (directory) => ({ command: "fake-terminal", args: [directory] }),
@@ -250,4 +251,47 @@ test("a gone launched instance is reopened after the grace window", async () => 
   time.t += 2_000; // past the grace window, server still gone
   await supervisor.ensure("/p"); // reopened
   assert.equal(launches, 2);
+});
+
+// A maintenance worker left in our directory is reaped, then exactly one is started.
+test("ensureAnchor reaps a stale anchor in our directory, then spawns one", async () => {
+  const time = { t: 1_000 };
+  const killedPids: number[] = [];
+  const spawns: number[] = [];
+  let nextPid = 300;
+  const registry = new Registry();
+  const stateDir = os.tmpdir();
+  registry.set([
+    {
+      port: 5555,
+      pid: 4242,
+      baseUrl: "http://127.0.0.1:5555",
+      primaryDirectory: path.join(stateDir, "anchor"),
+      version: "1.18.0",
+      healthy: true,
+      lastSeen: 1,
+      anchor: true,
+    },
+  ]);
+
+  const supervisor = new BackendSupervisor({
+    config: defaultConfig({ port: 0, stateDir, idleShutdownMs: 1_000, backendVersion: "v1" }),
+    registry,
+    spawnBackend: (port) => {
+      spawns.push(port);
+      const pid = nextPid++;
+      return { pid, kill: () => {} };
+    },
+    probeHealth: async () => true,
+    findFreePort: async () => 6000,
+    kill: (pid) => killedPids.push(pid),
+    now: () => time.t,
+    idleSweepMs: 1_000_000,
+    healthTimeoutMs: 200,
+  });
+
+  const anchor = await supervisor.ensureAnchor();
+  assert.ok(anchor);
+  assert.deepEqual(killedPids, [4242]); // the stale anchor was reaped
+  assert.equal(spawns.length, 1); // and exactly one fresh anchor started
 });

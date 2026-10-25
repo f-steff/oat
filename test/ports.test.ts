@@ -6,9 +6,29 @@ import {
   parseLsof,
   parseMacNetstat,
   parseProcNetTcp,
+  parseWindowsNetstat,
   parseWindowsNetTcp,
   type FsLike,
 } from "../src/discovery/ports.js";
+
+// netstat -ano parsing keeps TCP LISTEN rows and filters foreign addresses.
+test("parseWindowsNetstat parses TCP LISTEN rows", () => {
+  const out = [
+    "  TCP    127.0.0.1:46010    0.0.0.0:0    LISTENING    1234",
+    "  TCP    0.0.0.0:4096       0.0.0.0:0    LISTENING    5678",
+    "  TCP    [::]:135           [::]:0       LISTENING    4321",
+    "  TCP    8.8.8.8:80         0.0.0.0:0    LISTENING    9",
+    "  TCP    127.0.0.1:5000     127.0.0.1:6000  ESTABLISHED 1",
+    "  UDP    0.0.0.0:500        *:*          1234",
+  ].join("\r\n");
+  const rows = parseWindowsNetstat(out);
+  assert.deepEqual(
+    rows.map((row) => row.port),
+    [46010, 4096, 135],
+  );
+  assert.equal(rows[0]?.pid, 1234);
+  assert.equal(rows[2]?.address, "::");
+});
 
 // Windows parsing keeps loopback/wildcard rows and extracts ports and PIDs.
 test("parseWindowsNetTcp parses address|port|pid and filters foreign addresses", () => {
@@ -36,7 +56,7 @@ test("parseProcNetTcp keeps LISTEN rows and decodes hex ports", () => {
 
 // lsof parsing reads the PID column and the NAME column before "(LISTEN)".
 test("parseLsof parses a macOS LISTEN line", () => {
-  const out = "Python    60400 fsteff    3u  IPv4 0x1234      0t0  TCP 127.0.0.1:46123 (LISTEN)";
+  const out = "Python    60400 user    3u  IPv4 0x1234      0t0  TCP 127.0.0.1:46123 (LISTEN)";
   const rows = parseLsof(out);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.port, 46123);

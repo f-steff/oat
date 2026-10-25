@@ -1,0 +1,40 @@
+data: {"id":"evt_0cddf5324001U2jCtgpNm5zZKE","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0cddf570f001p2VHWVG5EJxkYW","created":1790160361231,"type":"session.created","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","slug":"tidy-tiger","version":"2.0.15","projectID":"e22c0befcd3aab577c593974d56decf884468691","location":{"directory":"/"},"subpath":"","title":"fixture"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":0,"version":1}}
+
+data: {"id":"evt_0cddf5b39001OYJ5HzLzJub7e6","created":1790160362297,"type":"session.inbox.enqueued","location":{"directory":"/"},"data":{"inboxID":"msg_0cddf5b37001dABY3zR4tLx5eD","sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","item":{"type":"user","payload":{"text":"Reply with exactly: OK"},"delivery":"steer"}},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":1,"version":1}}
+
+data: {"id":"evt_0cddf5b3c001mT5XyX8whsfotI","created":1790160362300,"type":"session.execution.started","data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":2,"version":1}}
+
+data: {"id":"evt_0cddf5b56001IwCWG3JQANcVNn","created":1790160362326,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","delta":{"core/environment":"06d2a0f484b92eb6315a996a35cf88a96180da0fbb45629ec6093ef8f82b5fe8","core/date":"037c7858a3c6bccf935963b755a124fa4f884782d19811fed411a6a34a1ad4a5","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":3,"version":2}}
+
+data: {"id":"evt_0cddf5b59001L5FRTPU3GZsoBf","created":1790160362329,"type":"session.inbox.delivered","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","inboxID":"msg_0cddf5b37001dABY3zR4tLx5eD"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":4,"version":1}}
+
+data: {"id":"evt_0cddf6413001Pcsd70ep8beVag","created":1790160364564,"type":"session.step.started","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","agent":"build","model":{"id":"mimo-v2.6-flash-free","providerID":"opencode"},"assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","started":1790160362351},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":5,"version":1}}
+
+data: {"id":"evt_0cddf6416001ToeLfynD5n0fUe","created":1790160364566,"type":"session.reasoning.started","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":6,"version":1}}
+
+data: {"id":"evt_0cddf647d0018M82aUKdr5kfjH","created":1790160364669,"type":"session.reasoning.delta","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"delta":"The user says \"Reply with exactly: OK\". I should reply"}}
+
+data: {"id":"evt_0cddf64b70017a5q3HRYm6rTHO","created":1790160364727,"type":"session.text.started","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":7,"version":1}}
+
+data: {"id":"evt_0cddf64bb00177o04OMQyubbGw","created":1790160364731,"type":"session.reasoning.delta","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"delta":" with exactly OK."}}
+
+data: {"id":"evt_0cddf64bb002K8NZ4kdzM5wK4k","created":1790160364731,"type":"session.reasoning.ended","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"text":"The user says \"Reply with exactly: OK\". I should reply with exactly OK.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":8,"version":1}}
+
+data: {"id":"evt_0cddf64bd001cbo5tIBLtAjRVj","created":1790160364733,"type":"session.text.delta","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"delta":"OK"}}
+
+data: {"id":"evt_0cddf64bd002HvCtOMNXbyILKx","created":1790160364733,"type":"session.text.ended","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","ordinal":0,"text":"OK"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":9,"version":1}}
+
+data: {"id":"evt_0cddf64bf001YqoZjnANzlHvPp","created":1790160364735,"type":"session.step.streamed","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":10,"version":1}}
+
+data: {"id":"evt_0cddf64c10012HAQ91ZzybI11C","created":1790160364737,"type":"session.step.ended","location":{"directory":"/"},"data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","assistantMessageID":"msg_0cddf5b65001kf1wKhVmJiw3EX","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":2842,"output":3,"reasoning":18,"cache":{"read":3456,"write":0}}},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":11,"version":1}}
+
+data: {"id":"evt_0cddf64c2001xwxi0dAtuU1h3E","created":1790160364738,"type":"session.usage.updated","data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","cost":0,"tokens":{"input":2842,"output":3,"reasoning":18,"cache":{"read":3456,"write":0}}}}
+
+data: {"id":"evt_0cddf64c3001INS6d4mcei9Ogz","created":1790160364739,"type":"session.execution.succeeded","data":{"sessionID":"ses_f3220a8f2ffefKePGPkyEHm5zJ"},"durable":{"aggregateID":"ses_f3220a8f2ffefKePGPkyEHm5zJ","seq":12,"version":1}}
+
+: heartbeat
+

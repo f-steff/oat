@@ -53,11 +53,18 @@ export async function callControl(
   token: string,
   route: string,
   method: "GET" | "POST" = "GET",
+  payload?: unknown,
 ): Promise<ControlResult> {
   // Present the bearer token and decode JSON when possible, falling back to text.
   const response = await fetch(`${baseUrl}${OAT_CONTROL_PREFIX}${route}`, {
     method,
-    headers: { authorization: `Bearer ${token}` },
+    // Never let a stuck daemon hang the CLI.
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(payload !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
   });
   const text = await response.text();
   let body: unknown = text;

@@ -2,13 +2,16 @@
 // Self-contained and self-terminating. Never leaves children alive.
 import { spawn, execFileSync } from "node:child_process"
 import http from "node:http"
+import os from "node:os"
+import path from "node:path"
 
-const EXE = "C:\\Users\\DKfls\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe"
-const SPIKE = "C:\\Users\\DKfls\\AppData\\Local\\Temp\\opencode\\oat-spike"
+// Point OPENCODE_BIN at a specific opencode build; otherwise use `opencode` on PATH.
+const EXE = process.env.OPENCODE_BIN ?? "opencode"
+const SPIKE = path.join(os.tmpdir(), "oat-spike")
 const MUX_PORT = 46099
 const BACKENDS = [
-  { name: "A", port: 46010, cwd: SPIKE + "\\projA", pid: null, primaryDirectory: null },
-  { name: "B", port: 46011, cwd: SPIKE + "\\projB", pid: null, primaryDirectory: null },
+  { name: "A", port: 46010, cwd: path.join(SPIKE, "projA"), pid: null, primaryDirectory: null },
+  { name: "B", port: 46011, cwd: path.join(SPIKE, "projB"), pid: null, primaryDirectory: null },
 ]
 
 const results = []
