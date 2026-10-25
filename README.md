@@ -15,6 +15,7 @@ shared server (no MCP bleed, independent lifecycles). `sesori-bridge` attaches t
 routes each request to the right instance.
 
 - Install guide: [`INSTALL.md`](INSTALL.md)
+- Troubleshooting FAQ: [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)
 - Design: [`DESIGN.md`](DESIGN.md)
 - Testing & troubleshooting: [`TESTING.md`](TESTING.md)
 - Developer setup (incl. remote test machines over SSH): [`DEVELOPING.md`](DEVELOPING.md)

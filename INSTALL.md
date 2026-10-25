@@ -12,6 +12,7 @@ OAT runs on **Windows, macOS and Linux**, and works with **opencode v1 or v2**. 
 itself you need **Node.js ≥ 20**, **npm** and **git**.
 
 - Design and behaviour: [`README.md`](README.md)
+- Troubleshooting FAQ: [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)
 - Developing / testing OAT (incl. remote machines over SSH): [`DEVELOPING.md`](DEVELOPING.md)
 - Test plan and troubleshooting: [`TESTING.md`](TESTING.md)
 
