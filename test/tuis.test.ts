@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
+  closeTuis,
   isTuiCommand,
   registerTui,
   relaunchTuis,
@@ -55,6 +56,31 @@ test("snapshotTuis merges registered and detected TUIs and resolves session dirs
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test("closeTuis only signals verified opencode TUIs", async () => {
+  const signaled: Array<[number, string]> = [];
+  const alive = new Set([111, 222]);
+  const result = await closeTuis(
+    [
+      { pid: 111, cwd: "/a", args: [], sessionId: "ses_a", source: "process" },
+      { pid: 222, cwd: null, args: [], sessionId: null, source: "registry" },
+    ],
+    { platform: "linux", graceMs: 0, selfPid: 999 },
+    {
+      run: (file) => (file === "ps" ? " 111 /usr/bin/opencode -s ses_a\n" : ""),
+      alive: (pid) => alive.has(pid),
+      sleep: async () => {},
+      signal: (pid, signal) => {
+        signaled.push([pid, signal]);
+        alive.delete(pid);
+      },
+    },
+  );
+  assert.deepEqual(signaled, [[111, "SIGINT"]]);
+  assert.deepEqual(result.closed, [111]);
+  assert.deepEqual(result.skipped, [222]);
+  assert.deepEqual(result.failed, []);
 });
 
 test("relaunchTuis skips entries without a cwd", () => {

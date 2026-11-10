@@ -410,6 +410,9 @@ async function runUpdate(
   }
 
   const closed = await closeTuis(tuis, { force: options.forceCloseTuis });
+  if (closed.skipped.length > 0) {
+    console.error(`oat: not signalling unverified TUI pid(s) (not confirmed opencode): ${closed.skipped.join(", ")}`);
+  }
   if (closed.failed.length > 0) {
     console.error(`oat: could not close TUI pid(s): ${closed.failed.join(", ")}`);
     console.error("oat: close them manually, or pass --force-close-tuis (may leak mouse mode)");
@@ -623,6 +626,9 @@ export async function restartOpencode(config: OatConfig, args: string[]): Promis
     return 1;
   }
   const closed = await closeTuis(tuis, { force: options.forceCloseTuis });
+  if (closed.skipped.length > 0) {
+    console.error(`oat: not signalling unverified TUI pid(s) (not confirmed opencode): ${closed.skipped.join(", ")}`);
+  }
   if (closed.failed.length > 0) {
     console.error(`oat: could not close TUI pid(s): ${closed.failed.join(", ")}`);
     console.error("oat: close them manually, or pass --force-close-tuis (may leak mouse mode)");

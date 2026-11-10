@@ -26,6 +26,8 @@ export interface TuiEntry {
 export interface TuiCloseResult {
   closed: number[];
   failed: number[];
+  /** Entries that could not be positively verified as opencode TUIs (never signalled). */
+  skipped: number[];
 }
 
 /** Result of a relaunch attempt. */
@@ -41,6 +43,8 @@ export interface TuiDeps {
   alive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
   launch?: (spec: LaunchSpec) => boolean;
+  /** Signal primitive (tests); defaults to SIGINT/SIGKILL or taskkill. */
+  signal?: (pid: number, signal: "SIGINT" | "SIGKILL") => void;
 }
 
 const defaultRun = (file: string, args: string[], timeoutMs = 10_000): string => {
@@ -301,8 +305,12 @@ export async function snapshotTuis(
     });
   }
 
+  const processPids = new Set(processes.map((process) => process.pid));
   for (const recorded of registry) {
     if (seen.has(recorded.pid)) continue;
+    // If opencode processes were enumerable, a registry pid that is no longer among
+    // them is stale (or its PID was reused) — never resurrect it for a signal.
+    if (processPids.size > 0 && !processPids.has(recorded.pid)) continue;
     const sessionId = sessionIdFromArgs(recorded.args.join(" "));
     entries.push({
       pid: recorded.pid,
@@ -315,27 +323,20 @@ export async function snapshotTuis(
   return entries;
 }
 
-function softClose(pid: number, platform: NodeJS.Platform): void {
-  try {
-    if (platform === "win32") {
-      execFileSync("taskkill", ["/PID", String(pid)], { timeout: 5_000, windowsHide: true, stdio: "ignore" });
-    } else {
-      process.kill(pid, "SIGINT");
+function defaultSignal(pid: number, kind: "SIGINT" | "SIGKILL", platform: NodeJS.Platform): void {
+  if (platform === "win32") {
+    const args = kind === "SIGKILL" ? ["/PID", String(pid), "/F", "/T"] : ["/PID", String(pid)];
+    try {
+      execFileSync("taskkill", args, { timeout: 5_000, windowsHide: true, stdio: "ignore" });
+    } catch {
+      // Already gone or not closable; the waiter below reports it.
     }
-  } catch {
-    // Already gone or not closable; the waiter below reports it.
+    return;
   }
-}
-
-function forceClose(pid: number, platform: NodeJS.Platform): void {
   try {
-    if (platform === "win32") {
-      execFileSync("taskkill", ["/PID", String(pid), "/F", "/T"], { timeout: 5_000, windowsHide: true, stdio: "ignore" });
-    } else {
-      process.kill(pid, "SIGKILL");
-    }
+    process.kill(pid, kind);
   } catch {
-    // Ignore: the result reports what survived.
+    // Already gone.
   }
 }
 
@@ -349,14 +350,27 @@ export async function closeTuis(
   const alive = (pid: number): boolean => isAlive(pid, deps.alive);
   const sleep = deps.sleep ?? defaultSleep;
   const selfPid = opts.selfPid ?? process.pid;
-  const targets = entries.filter((entry) => entry.pid !== selfPid && alive(entry.pid));
+  // Only ever signal PIDs we can positively confirm are opencode TUIs. A stale
+  // registry entry may have been reused by an unrelated process (e.g. the bridge).
+  const verified = new Set(
+    listProcessTuis(platform, deps)
+      .filter((process) => isTuiCommand(process.cmd))
+      .map((process) => process.pid),
+  );
+  const candidates = entries.filter((entry) => entry.pid !== selfPid && alive(entry.pid));
+  const targets = candidates.filter((entry) => verified.has(entry.pid));
+  const skipped = candidates.filter((entry) => !verified.has(entry.pid)).map((entry) => entry.pid);
+  const signal = (pid: number, kind: "SIGINT" | "SIGKILL"): void => {
+    if (deps.signal) deps.signal(pid, kind);
+    else defaultSignal(pid, kind, platform);
+  };
 
-  for (const entry of targets) softClose(entry.pid, platform);
+  for (const entry of targets) signal(entry.pid, "SIGINT");
   const deadline = Date.now() + (opts.graceMs ?? 5_000);
   while (Date.now() < deadline && targets.some((entry) => alive(entry.pid))) await sleep(200);
 
   if (opts.force) {
-    for (const entry of targets.filter((target) => alive(target.pid))) forceClose(entry.pid, platform);
+    for (const entry of targets.filter((target) => alive(target.pid))) signal(entry.pid, "SIGKILL");
     const forceDeadline = Date.now() + 2_000;
     while (Date.now() < forceDeadline && targets.some((entry) => alive(entry.pid))) await sleep(100);
   }
@@ -364,6 +378,7 @@ export async function closeTuis(
   return {
     closed: targets.filter((entry) => !alive(entry.pid)).map((entry) => entry.pid),
     failed: targets.filter((entry) => alive(entry.pid)).map((entry) => entry.pid),
+    skipped,
   };
 }
 
