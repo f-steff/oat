@@ -311,6 +311,117 @@ function handleSse(req: http.IncomingMessage, res: http.ServerResponse, deps: Mu
   });
 }
 
+/** Proxy the raw v2 `/api/event` stream for one backend. */
+async function proxyV2EventStream(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  backend: Backend,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const onClose = (): void => controller.abort();
+  req.on("close", onClose);
+  res.on("close", onClose);
+  const headers: Record<string, string> = { accept: "text/event-stream" };
+  if (backend.password) headers.authorization = basicAuth(backend.password);
+  try {
+    const upstream = await fetch(`${backend.baseUrl}/api/event`, { headers, signal: controller.signal });
+    if (!upstream.ok || !upstream.body) throw new Error(`upstream ${upstream.status}`);
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache, no-transform",
+        "x-accel-buffering": "no",
+        connection: "keep-alive",
+      });
+    }
+    const reader = upstream.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || res.writableEnded) break;
+      res.write(Buffer.from(value));
+    }
+    if (!res.writableEnded) res.end();
+    return true;
+  } catch {
+    // Before headers are sent the caller can fall back to the waiting path.
+    if (!res.headersSent && !res.writableEnded) return false;
+    if (!res.writableEnded) res.end();
+    return false;
+  } finally {
+    req.off("close", onClose);
+    res.off("close", onClose);
+  }
+}
+
+/**
+ * Handle `/api/event` for a v2 client. Proxy the backend's raw stream when one is
+ * available; otherwise hold a valid SSE response with heartbeats until discovery
+ * finds one. This prevents a transient "no backend" window (for example during an
+ * OAT restart) from being delivered as a JSON body on an SSE endpoint.
+ */
+function handleV2Sse(req: http.IncomingMessage, res: http.ServerResponse, deps: MuxDeps, url: URL): void {
+  const directory = directoryFor(req, url);
+  const pick = (): Backend | null =>
+    pickBackend(deps.registry.list(), { directory }, { defaultPort: deps.registry.defaultPort() })?.backend ?? null;
+
+  const wait = (): void => {
+    if (res.headersSent || res.writableEnded) return;
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      "x-accel-buffering": "no",
+      connection: "keep-alive",
+    });
+    res.write(": oat waiting for opencode\n\n");
+
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const stop = (): void => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      deps.registry.off("change", onChange);
+      req.off("close", onClose);
+      res.off("close", onClose);
+    };
+    const onClose = (): void => {
+      if (settled) return;
+      settled = true;
+      stop();
+    };
+    const start = (backend: Backend): void => {
+      if (settled) return;
+      settled = true;
+      stop();
+      void proxyV2EventStream(req, res, backend);
+    };
+    const onChange = (): void => {
+      const backend = pick();
+      if (backend) start(backend);
+    };
+    req.on("close", onClose);
+    res.on("close", onClose);
+    deps.registry.on("change", onChange);
+    timer = setInterval(() => {
+      if (settled) return;
+      if (!res.writableEnded) res.write(": oat waiting for opencode\n\n");
+      const backend = pick();
+      if (backend) start(backend);
+    }, 5_000);
+    timer.unref?.();
+  };
+
+  const first = pick();
+  if (!first) {
+    wait();
+    return;
+  }
+  void proxyV2EventStream(req, res, first).then((ok) => {
+    if (!ok) wait();
+  });
+}
+
 /** Endpoints that actually start or drive an agent run for a directory. */
 function isRunAction(method: string, pathname: string): boolean {
   if (method !== "POST") return false;
@@ -737,6 +848,12 @@ export function createMuxServer(deps: MuxDeps): http.Server {
     // OAT answers the bridge's liveness probe itself.
     if (url.pathname === "/global/health") {
       sendJson(res, 200, { healthy: true, version: `oat/${OAT_VERSION}` });
+      return;
+    }
+    // A v2 client streams `/api/event`; hold it open with heartbeats while
+    // discovery catches up instead of returning a JSON error on an SSE endpoint.
+    if (url.pathname === "/api/event") {
+      handleV2Sse(req, res, deps, url);
       return;
     }
     // The event stream is merged across all backends.
