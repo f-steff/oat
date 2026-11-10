@@ -172,6 +172,30 @@ OAT_BACKEND_VERSION=v1 OPENCODE_BIN="$HOME/.local/bin/oc-v1" oat start   # macOS
 
 ## 6. Updating opencode
 
+### With OAT (recommended, v2)
+
+```bash
+oat update opencode --check   # current/latest, method, active sessions, open TUIs
+oat update opencode           # wait for idle, update, restart the service, relaunch TUIs
+```
+
+`oat update opencode` waits for every session to become idle, gracefully closes the opencode TUIs,
+updates the binary with the detected method, restarts the shared service, reloads OAT, and relaunches the
+TUIs in their original directories. Options:
+
+- `--no-relaunch` — do not reopen the TUIs;
+- `--timeout <s>` — bound the idle wait (default: wait indefinitely);
+- `--force-interrupt` — abort an in-flight turn so the update can proceed (that turn is lost);
+- `--force-close-tuis` — force-kill a TUI that will not close gracefully (on Windows this can leave the
+  terminal in mouse-reporting mode);
+- `--backup-db` — copy `opencode.db` before updating (the database can be large);
+- `--method auto|npm|brew-core|brew-tap|curl` — override detection.
+
+`oat install opencode` (auto: npm; macOS can use `--method brew`) and `oat restart opencode` use the same
+lifecycle. These commands manage **opencode only** — never the bridge or OAT itself.
+
+### Manually
+
 The in-TUI `/update` relies on opencode detecting how it was installed, which is **not always reliable**.
 If it reports *"Could not detect the installation method"*, pass the method explicitly or use the
 package manager:

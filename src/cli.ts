@@ -13,10 +13,12 @@ import { readV2Service } from "./discovery/service.js";
 import { expandTokens, resolveExecutable, resolveOpencodeExecutable } from "./launcher.js";
 import { resolveGeneration } from "./generation.js";
 import { log, logFilePath, setLogFile } from "./logger.js";
+import { installOpencode, restartOpencode, updateOpencode } from "./opencode-lifecycle.js";
 import { Registry } from "./registry.js";
 import { createMuxServer, OAT_VERSION, type ControlHandlers } from "./server.js";
 import { clearState, clearStateIfOwned, isProcessAlive, readState, writeState, type OatState } from "./state.js";
 import { BackendSupervisor } from "./supervisor.js";
+import { registerTui, unregisterTui } from "./tuis.js";
 import type { Backend, OatConfig } from "./types.js";
 
 /** Read the tail of the daemon log file, when present, for error reporting. */
@@ -270,7 +272,17 @@ async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<n
     // are registered in service.json and discovered by OAT. (A private `--standalone`
     // server uses a random password OAT cannot learn; pass it explicitly for that.)
     console.log(`oat: starting opencode v2 in this terminal (${directory})`);
-    return spawnForeground(command, opencodeArgs, { cwd: directory, shell, label: "opencode v2" });
+    return spawnForeground(command, opencodeArgs, {
+      cwd: directory,
+      shell,
+      label: "opencode v2",
+      onSpawn: (pid) => {
+        if (pid) registerTui(config.stateDir, { pid, cwd: directory, args: opencodeArgs, startedAt: Date.now() });
+      },
+      onExit: (pid) => {
+        if (pid) unregisterTui(config.stateDir, pid);
+      },
+    });
   }
 
   // v1: an embedded server only appears with a network flag, so inject a free
@@ -291,14 +303,31 @@ async function runOpencode(config: OatConfig, opencodeArgs: string[]): Promise<n
     if (needsPort) console.log(`oat: opencode will listen on http://${config.host}:${hostPort} (so the bridge can attach)`);
   }
   console.log(`oat: starting opencode v1 in this terminal (${directory})`);
-  return spawnForeground(command, args, { cwd: directory, shell, label: "opencode" });
+  return spawnForeground(command, args, {
+    cwd: directory,
+    shell,
+    label: "opencode",
+    onSpawn: (pid) => {
+      if (pid) registerTui(config.stateDir, { pid, cwd: directory, args, startedAt: Date.now() });
+    },
+    onExit: (pid) => {
+      if (pid) unregisterTui(config.stateDir, pid);
+    },
+  });
 }
 
 /** Spawn a tool in the current terminal (inherited stdio) and resolve with its exit code. */
 function spawnForeground(
   command: string,
   args: string[],
-  opts: { cwd?: string; shell: boolean; env?: NodeJS.ProcessEnv; label: string },
+  opts: {
+    cwd?: string;
+    shell: boolean;
+    env?: NodeJS.ProcessEnv;
+    label: string;
+    onSpawn?: (pid: number | undefined) => void;
+    onExit?: (pid: number | undefined) => void;
+  },
 ): Promise<number> {
   const child = spawn(command, args, {
     cwd: opts.cwd,
@@ -307,9 +336,14 @@ function spawnForeground(
     windowsHide: false,
     ...(opts.env ? { env: opts.env } : {}),
   });
+  opts.onSpawn?.(child.pid);
   return new Promise<number>((resolve) => {
-    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    child.on("exit", (code, signal) => {
+      opts.onExit?.(child.pid);
+      resolve(code ?? (signal ? 1 : 0));
+    });
     child.on("error", (error) => {
+      opts.onExit?.(child.pid);
       console.error(`oat: failed to start ${opts.label}: ${error.message}`);
       resolve(1);
     });
@@ -533,6 +567,9 @@ const USAGE = ((): string => {
     ["oat reload [-json]", "re-scan for opencode backends now"],
     ["oat stop [-json]", "stop the daemon and its hidden servers (your terminals are left alone)"],
     ["oat opencode [args...]", "run the installed opencode here (v1 or v2, auto-detected); args pass through"],
+    ["oat install opencode [...]", "install opencode v2 (auto-detected method)"],
+    ["oat update opencode [...]", "wait for idle, update opencode, then relaunch the closed TUIs"],
+    ["oat restart opencode [...]", "restart the shared opencode service and relaunch the closed TUIs"],
     ["oat sesori-bridge [args...]", "run the Sesori bridge here, pointed at OAT; args pass through"],
     ["oat serve", "run the daemon in the foreground (internal)"],
     ["oat version", "print the OAT version (also -v, --version)"],
@@ -583,25 +620,37 @@ const USAGE = ((): string => {
 /** Parse the command line and dispatch to the right operation. */
 async function main(): Promise<number> {
   const raw = process.argv.slice(2);
+  // `oat [opts] <install|update|restart> opencode [...]` is handled before the
+  // pass-through tool split (`oat opencode ...` / `oat sesori-bridge ...`).
+  const lifecycleIndex = raw.findIndex(
+    (arg, index) => (arg === "install" || arg === "update" || arg === "restart") && raw[index + 1] === "opencode",
+  );
+  const lifecycleCommand = lifecycleIndex >= 0 ? (raw[lifecycleIndex] ?? null) : null;
   // `oat [oat-opts] <tool> [args...]` splits at the first tool token; the rest
   // passes through to that tool. First match in the line wins.
   const TOOLS = ["sesori-bridge", "opencode"];
   let tool: string | null = null;
   let splitIndex = -1;
-  for (const candidate of TOOLS) {
-    const index = raw.indexOf(candidate);
-    if (index !== -1 && (splitIndex === -1 || index < splitIndex)) {
-      tool = candidate;
-      splitIndex = index;
+  if (!lifecycleCommand) {
+    for (const candidate of TOOLS) {
+      const index = raw.indexOf(candidate);
+      if (index !== -1 && (splitIndex === -1 || index < splitIndex)) {
+        tool = candidate;
+        splitIndex = index;
+      }
     }
   }
-  const oatArgs = tool ? raw.slice(0, splitIndex) : raw;
-  const toolArgs = tool ? raw.slice(splitIndex + 1) : [];
+  const oatArgs = lifecycleCommand ? raw : tool ? raw.slice(0, splitIndex) : raw;
+  const toolArgs = lifecycleCommand
+    ? raw.slice(lifecycleIndex + 2)
+    : tool
+      ? raw.slice(splitIndex + 1)
+      : [];
   // The command is the tool name, a recognized flag-only command, or the first
   // non-flag OAT argument (a lone `-json` etc. is a flag, not a command).
   const first = oatArgs[0] ?? "";
   const FLAG_COMMANDS = new Set(["-v", "--version", "-h", "--help"]);
-  const command = tool ?? (FLAG_COMMANDS.has(first) ? first : first && !first.startsWith("-") ? first : "");
+  const command = lifecycleCommand ?? tool ?? (FLAG_COMMANDS.has(first) ? first : first && !first.startsWith("-") ? first : "");
   // `-json` (or `--json`) switches data commands from tables to JSON.
   const json = oatArgs.includes("-json") || oatArgs.includes("--json");
   // Read a `--flag value` or `--flag=value` option from the OAT arguments.
@@ -647,6 +696,13 @@ async function main(): Promise<number> {
       return simpleCommand(config, "/reload", "reloaded", json);
     case "stop":
       return stopCommand(config, json);
+    // opencode lifecycle (install / update / restart).
+    case "install":
+      return installOpencode(config, toolArgs);
+    case "update":
+      return updateOpencode(config, toolArgs);
+    case "restart":
+      return restartOpencode(config, toolArgs);
     // Simple informational commands.
     case "version":
     case "--version":

@@ -89,6 +89,20 @@ A reboot also clears leaked sockets, but the leak will return if the offending p
 
 ---
 
+## Updating opencode closes my TUIs (or refuses to)
+
+`oat update opencode` waits for all sessions to become idle, then closes the open TUIs so the binary can
+be replaced (on Windows a running `opencode.exe` locks the file). It closes them **gracefully**; if one
+does not exit, the command aborts and lists it. Close it manually, or pass `--force-close-tuis`
+(force-kill; on Windows this can leave the terminal in mouse-reporting mode — `OPENCODE_DISABLE_MOUSE=1`
+avoids the TUI enabling mouse reporting in the first place).
+
+After the update the TUIs are relaunched by default in their original directories (`--no-relaunch` to
+skip). Sessionless TUIs are relaunched in their cwd; TUIs started with `oat opencode` are recorded
+exactly. The command never restarts the bridge or OAT itself.
+
+---
+
 ## "The project has no / commands" / `/btw` is sent as a normal prompt
 
 opencode has **two kinds of slash commands**:

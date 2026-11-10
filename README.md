@@ -157,6 +157,9 @@ oat list [-json]             list discovered opencode backends (KIND, VERSION, D
 oat reload [-json]           re-scan for opencode backends now
 oat stop [-json]             stop the daemon and its hidden servers (your terminals are left alone)
 oat opencode [args...]       run the installed opencode here (v1 or v2, auto-detected)
+oat install opencode [...]   install opencode v2 (auto-detected method)
+oat update opencode [...]    wait for idle, update opencode, relaunch the closed TUIs
+oat restart opencode [...]   restart the shared opencode service, relaunch the closed TUIs
 oat sesori-bridge [args...]  run the bridge here, pointed at OAT (args pass through)
 oat serve                    run the daemon in the foreground (internal)
 oat version                  print version
@@ -170,9 +173,9 @@ environment variables.
 ### `oat opencode`
 
 Runs opencode **in the terminal you are in** (arguments pass through), ensuring the daemon is up so the
-bridge connects to it. The behaviour follows the detected generation: **v1** gets a free
-`--port`/`--hostname` injected (a plain v1 TUI exposes no port); **v2** runs a private server
-(`--standalone`) with `OPENCODE_SERVER_PASSWORD` exported so OAT can discover and route to it.
+bridge connects to it. **v1** gets a free `--port`/`--hostname` injected (a plain v1 TUI exposes no port).
+**v2** runs the normal TUI against opencode's shared background service; OAT discovers it from
+`service.json`. The TUI is recorded so `oat update/restart opencode` can relaunch it.
 
 ```bash
 cd <project>
@@ -184,6 +187,32 @@ oat opencode -s ses_...      # any opencode args pass through
 
 Runs the bridge in the current terminal, pointed at OAT. The injected flags are a template
 (`OAT_BRIDGE_ARGS`); `oat --port 5000 sesori-bridge` moves both off a busy 4096.
+
+### `oat install | update | restart opencode`
+
+OAT can manage the installed opencode v2. All three use the same safe sequence: wait for every session to
+become idle, gracefully close the opencode TUIs, perform the operation, then relaunch the TUIs in their
+original directories (same `-s <session>`), and reload OAT.
+
+```bash
+oat install opencode --check            # show the detected method and command
+oat install opencode                    # fresh install (auto: npm; macOS --method brew)
+oat update  opencode --check            # current/latest, active sessions, open TUIs
+oat update  opencode                    # wait for idle, update, relaunch
+oat restart opencode                    # restart the shared service + relaunch
+```
+
+- **Method `auto`** matches the binary OAT uses: npm global, Homebrew core/tap, or the official
+  installer. Ambiguous installs require `--method`.
+- **Waiting** is indefinite by default; `--timeout <s>` bounds it, and `--force-interrupt` is the only way
+  to abort an in-flight turn (that turn is lost; history is kept).
+- **TUI close is graceful only.** If a TUI will not exit, the command aborts and lists it. On Windows the
+  TUIs must exit because the binary is locked. `--force-close-tuis` is opt-in and can leave a terminal in
+  mouse-reporting mode.
+- **Relaunch is on by default**; `--no-relaunch` disables it. Sessionless TUIs are relaunched in their own
+  directory (best-effort cwd discovery on Windows).
+- `--backup-db` copies `opencode.db` before updating (the DB can be large).
+- This manages **opencode only** — never the bridge or OAT itself.
 
 ## Migrating from opencode v1 to v2
 
@@ -225,7 +254,11 @@ one-way and prepare for it:
 - Running **v1 and v2 against the same opencode data directory is not supported** (v2 migrates it in
   place); use one generation at a time.
 - **PTY/WebSocket** proxying is implemented but only handshake-tested; no live PTY test yet.
-- Distribution is **source + `npm link`** only; no published package or single binary.
+- **`oat install/update/restart opencode` are v2-only.** They wait for idle, close TUIs gracefully, and
+  relaunch them; opencode has no suspend/resume API, so an in-flight turn is only waited for or aborted
+  (never paused and continued).
+- Distribution today is **source + `npm link`**; the release workflow publishes `@f-steff/oat` to npm on a
+  version bump merged to `main`.
 - The daemon's port is **unauthenticated** and bound to loopback by default.
 - OAT assumes a **single daemon**; multiple daemons are not coordinated.
 - Real-opencode end-to-end tests are local/manual (they need opencode installed). Cross-OS checks run on
