@@ -1,0 +1,4 @@
+#!/bin/sh
+# Standalone launcher: run OAT from the repo without `npm link`.
+# Requires a build first (npm run build).
+exec node "$(dirname "$0")/../dist/cli.js" "$@"

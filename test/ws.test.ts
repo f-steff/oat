@@ -26,6 +26,24 @@ function startUpgradeBackend(): Promise<{ server: http.Server; port: number }> {
   });
 }
 
+// Start a backend that accepts an upgrade and echoes the first payload, then ends.
+function startEchoBackend(): Promise<{ server: http.Server; port: number }> {
+  return new Promise((resolve) => {
+    const server = http.createServer();
+    server.on("upgrade", (_req, socket) => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+      socket.on("data", (chunk: Buffer) => {
+        socket.write(chunk);
+        socket.end();
+      });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve({ server, port: typeof address === "object" && address ? address.port : 0 });
+    });
+  });
+}
+
 // Bind a server to an ephemeral loopback port and return that port.
 function listen(server: http.Server): Promise<number> {
   return new Promise((resolve) => {
@@ -91,4 +109,59 @@ test("mux proxies websocket upgrades by directory", async (t) => {
 
   assert.match(response, /101 Switching Protocols/);
   assert.match(response, /hello/);
+});
+
+// After the handshake the mux must tunnel data both ways (PTY-style live flow).
+test("mux proxies live bidirectional websocket data", async (t) => {
+  const backend = await startEchoBackend();
+  const descriptor: Backend = {
+    port: backend.port,
+    pid: 6,
+    baseUrl: `http://127.0.0.1:${backend.port}`,
+    primaryDirectory: "C:\\pty",
+    version: "test",
+    healthy: true,
+    lastSeen: 0,
+  };
+  const registry = new Registry();
+  registry.set([descriptor]);
+
+  const config = defaultConfig({ port: 0, stateDir: os.tmpdir() });
+  const server = createMuxServer({ config, registry });
+  const port = await listen(server);
+  t.after(async () => {
+    await close(server);
+    await close(backend.server);
+  });
+
+  const received = await new Promise<string>((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(
+        "GET /ws HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "x-opencode-directory: C:\\pty\r\n\r\n",
+      );
+    });
+    let data = "";
+    let sent = false;
+    socket.on("data", (chunk: Buffer) => {
+      data += chunk.toString();
+      // Once upgraded, send a payload; the backend echoes it and closes.
+      if (!sent && data.includes("101 Switching Protocols")) {
+        sent = true;
+        socket.write("ping-123");
+      }
+    });
+    socket.on("end", () => resolve(data));
+    socket.on("error", reject);
+    setTimeout(() => {
+      socket.destroy();
+      resolve(data);
+    }, 2_000);
+  });
+
+  assert.match(received, /101 Switching Protocols/);
+  assert.match(received, /ping-123/);
 });

@@ -15,6 +15,9 @@ logs/
 .env
 .env.*
 
+# Local scratch / machine-specific notes (never commit)
+temp/
+
 # OS / editor
 .DS_Store
 Thumbs.db

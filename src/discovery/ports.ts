@@ -12,7 +12,9 @@ export type Runner = (file: string, args: string[]) => Promise<string>;
 
 /** Default runner backed by `child_process.execFile`. */
 export const defaultRunner: Runner = async (file, args) => {
-  const { stdout } = await pexec(file, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true });
+  // Bound every external probe: a hung OS tool (e.g. Get-NetTCPConnection) must not
+  // stall discovery forever.
+  const { stdout } = await pexec(file, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 10_000 });
   return stdout;
 };
 
@@ -54,6 +56,31 @@ export function parseWindowsNetTcp(output: string): RawListener[] {
     if (!Number.isFinite(port)) continue;
     if (!isRelevantAddress(address)) continue;
     const pid = parts[2] ? Number.parseInt(parts[2].trim(), 10) : Number.NaN;
+    out.push({ port, pid: Number.isFinite(pid) && pid > 0 ? pid : null, address });
+  }
+  return out;
+}
+
+/** Parse Windows `netstat -ano` output, keeping only TCP LISTEN rows. */
+export function parseWindowsNetstat(output: string): RawListener[] {
+  const out: RawListener[] = [];
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Proto  Local Address   Foreign Address  State      PID
+    const parts = line.split(/\s+/);
+    if (parts.length < 5) continue;
+    if ((parts[0] ?? "").toUpperCase() !== "TCP") continue;
+    if ((parts[3] ?? "").toUpperCase() !== "LISTENING") continue;
+    const local = parts[1] ?? "";
+    // IPv6 locals look like `[::]:4096`; split on the last colon either way.
+    const colon = local.lastIndexOf(":");
+    if (colon === -1) continue;
+    const port = Number.parseInt(local.slice(colon + 1), 10);
+    if (!Number.isFinite(port)) continue;
+    const address = local.slice(0, colon).replace(/^\[|\]$/g, "");
+    if (!isRelevantAddress(address)) continue;
+    const pid = Number.parseInt(parts[4] ?? "", 10);
     out.push({ port, pid: Number.isFinite(pid) && pid > 0 ? pid : null, address });
   }
   return out;
@@ -215,8 +242,15 @@ export async function listListeners(deps: ListenerDeps = {}): Promise<RawListene
   const platform = deps.platform ?? process.platform;
   const runner = deps.runner ?? defaultRunner;
 
-  // Windows: PowerShell reports address, port and owning PID directly.
+  // Windows: `netstat -ano` is fast and does not depend on WMI/CIM (which can hang).
+  // Fall back to PowerShell's Get-NetTCPConnection only if netstat yields nothing.
   if (platform === "win32") {
+    try {
+      const parsed = parseWindowsNetstat(await runner("netstat", ["-ano"]));
+      if (parsed.length > 0) return parsed;
+    } catch {
+      // Fall through to the PowerShell probe.
+    }
     const script =
       "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | " +
       "Where-Object { $_.LocalAddress -in @('127.0.0.1','::1','0.0.0.0','::') } | " +
