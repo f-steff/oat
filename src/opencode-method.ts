@@ -228,3 +228,65 @@ export function describeInfo(info: OpencodeInfo): string {
   const label = version.startsWith("opencode") ? version : `opencode ${version}`;
   return `${label} · ${info.method} · ${path}`;
 }
+
+/** Compare two `x.y.z` versions; positive when `a` is newer. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map((part) => Number(part));
+  const pb = b.split(".").map((part) => Number(part));
+  for (let index = 0; index < Math.max(pa.length, pb.length); index += 1) {
+    const difference = (pa[index] ?? 0) - (pb[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/** Extract `x.y.z` from an `opencode vX.Y.Z` version string. */
+export function normalizeVersion(version: string | null): string | null {
+  if (!version) return null;
+  const match = /(\d+\.\d+\.\d+)/.exec(version);
+  return match?.[1] ?? null;
+}
+
+/** Stable versions published on npm, plus tags and the installed version. */
+export interface AvailableVersions {
+  /** Stable versions, newest first. */
+  versions: string[];
+  latest: string | null;
+  tags: Record<string, string>;
+  installed: string | null;
+}
+
+/** Read the stable `@opencode/cli` versions and dist-tags from npm. */
+export function listAvailableVersions(installed: string | null, deps: MethodDeps = {}): AvailableVersions {
+  const exec = deps.exec ?? defaultExec;
+  const platform = deps.platform ?? process.platform;
+  const shell = platform === "win32";
+  const parse = (raw: string): unknown => {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  };
+
+  const versionsRaw = parse(exec("npm", ["view", "@opencode/cli", "versions", "--json"], { timeoutMs: 30_000, shell }));
+  const versions = (Array.isArray(versionsRaw) ? versionsRaw : [])
+    .filter((value): value is string => typeof value === "string" && /^\d+\.\d+\.\d+$/.test(value))
+    .sort((a, b) => compareVersions(b, a));
+
+  const tagsRaw = parse(exec("npm", ["view", "@opencode/cli", "dist-tags", "--json"], { timeoutMs: 15_000, shell }));
+  const tagObject = Array.isArray(tagsRaw) ? tagsRaw[0] : tagsRaw;
+  const tags: Record<string, string> = {};
+  if (tagObject && typeof tagObject === "object") {
+    for (const [key, value] of Object.entries(tagObject as Record<string, unknown>)) {
+      if (typeof value === "string") tags[key] = value;
+    }
+  }
+
+  return {
+    versions,
+    latest: tags.latest ?? versions[0] ?? null,
+    tags,
+    installed: normalizeVersion(installed),
+  };
+}

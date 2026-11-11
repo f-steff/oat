@@ -8,9 +8,11 @@ import { callControl } from "./control.js";
 import { readV2Service } from "./discovery/service.js";
 import { resolveOpencodeExecutable } from "./launcher.js";
 import {
+  compareVersions,
   describeInfo,
   installPlan,
   latestNpmVersion,
+  listAvailableVersions,
   resolveOpencodeInfo,
   updatePlan,
   type CommandPlan,
@@ -31,6 +33,7 @@ import type { OatConfig } from "./types.js";
 /** Parsed options for the lifecycle commands. */
 export interface LifecycleOptions {
   check: boolean;
+  list: boolean;
   method: "auto" | InstallMethod;
   version: string;
   /** 0 = wait indefinitely. */
@@ -51,19 +54,28 @@ export const LIFECYCLE_USAGE = [
   "Usage:",
   "  oat install opencode [--method auto|npm|brew-core|brew-tap|curl] [--version latest|<x.y.z>]",
   "                       [--force] [--yes] [-json]",
-  "  oat update  opencode [--check] [--method ...] [--version latest|<x.y.z>]",
-  "                       [--timeout <seconds>] [--force-interrupt] [--no-relaunch]",
+  "  oat update  opencode [--check] [--list] [--method ...] [--version latest|<x.y.z>]",
+  "                       [--timeout <s>] [--force-interrupt] [--no-relaunch]",
   "                       [--force-close-tuis] [--backup-db] [--yes] [-json]",
-  "  oat restart opencode [--timeout <seconds>] [--force-interrupt] [--no-relaunch]",
+  "  oat restart opencode [--timeout <s>] [--force-interrupt] [--no-relaunch]",
   "                       [--force-close-tuis] [--yes] [-json]",
   "",
+  "Options:",
+  "  --check              show what would happen; make no changes",
+  "  --list, --list-available",
+  "                       list stable @opencode/cli versions (installed and latest marked)",
+  "  --method <m>         auto (default) | npm | brew-core | brew-tap | curl | other",
+  "  --version <v>        latest (default) or an exact version, e.g. 2.2.6",
+  "  --timeout <s>        give up waiting for idle after <s> seconds (0 = forever)",
+  "  --force-interrupt    interrupt active sessions (their current turn is lost)",
+  "  --no-relaunch        do not reopen the TUIs that were closed",
+  "  --force-close-tuis   force-kill a TUI that does not close gracefully (may leak mouse mode)",
+  "  --force              install: replace an existing install",
+  "  --backup-db          copy opencode.db before updating (may be several GB)",
+  "  --yes                do not ask for confirmation",
+  "  -json, --json        print machine-readable output (check/list/results)",
+  "",
   "Defaults: --method auto, wait for idle indefinitely, relaunch TUIs, graceful close only.",
-  "  --timeout <s>         give up waiting after <s> seconds (0 = forever)",
-  "  --force-interrupt     interrupt active sessions (their current turn is lost)",
-  "  --no-relaunch         do not reopen the TUIs that were closed",
-  "  --force-close-tuis    force-kill a TUI that does not close gracefully (may leak mouse mode)",
-  "  --backup-db           copy opencode.db before updating (may be several GB)",
-  "  --yes                 do not ask for confirmation",
   "",
 ].join("\n");
 
@@ -71,6 +83,7 @@ export const LIFECYCLE_USAGE = [
 export function parseLifecycleArgs(args: string[]): LifecycleOptions {
   const options: LifecycleOptions = {
     check: false,
+    list: false,
     method: "auto",
     version: "latest",
     timeoutMs: 0,
@@ -94,6 +107,7 @@ export function parseLifecycleArgs(args: string[]): LifecycleOptions {
       return undefined;
     };
     if (arg === "--check") options.check = true;
+    else if (arg === "--list" || arg === "--list-available") options.list = true;
     else if (arg === "--force-interrupt") options.forceInterrupt = true;
     else if (arg === "--no-relaunch") options.noRelaunch = true;
     else if (arg === "--force-close-tuis") options.forceCloseTuis = true;
@@ -344,6 +358,36 @@ function printTuis(entries: TuiEntry[]): void {
   }
 }
 
+/** Print the stable `@opencode/cli` versions available on npm. */
+function printAvailable(info: OpencodeInfo, json: boolean): number {
+  const available = listAvailableVersions(info.version);
+  if (available.versions.length === 0) {
+    console.error("oat: could not read available versions from npm");
+    return 1;
+  }
+  const installed = available.installed;
+  const newer = installed
+    ? available.versions.filter((version) => compareVersions(version, installed) >= 0)
+    : [];
+  const shown = newer.length > 0 ? newer : available.versions.slice(0, 20);
+  if (json) {
+    console.log(JSON.stringify({ ...available, method: info.method, shown }, null, 2));
+    return 0;
+  }
+  console.log(`stable @opencode/cli versions (npm; detected install: ${info.method}):`);
+  for (const version of shown) {
+    const marks = [version === available.latest ? "latest" : "", version === installed ? "installed" : ""].filter(
+      Boolean,
+    );
+    console.log(`  ${version}${marks.length > 0 ? `  (${marks.join(", ")})` : ""}`);
+  }
+  if (available.tags.latest) console.log(`latest tag: ${available.tags.latest}`);
+  if (info.method !== "npm" && info.method !== "other") {
+    console.log("note: this is the npm channel; your package manager may offer different versions");
+  }
+  return 0;
+}
+
 function relaunch(config: OatConfig, entries: TuiEntry[], options: LifecycleOptions): TuiRelaunchResult {
   if (options.noRelaunch || entries.length === 0) return { launched: [], failed: [] };
   const result = relaunchTuis(entries, { launchCommand: config.launchCommand });
@@ -509,6 +553,7 @@ export async function updateOpencode(config: OatConfig, args: string[]): Promise
   if (options.unknown.length > 0) console.error(`oat: ignoring unknown option(s): ${options.unknown.join(", ")}`);
 
   const info = resolveOpencodeInfo(config.opencodeBin);
+  if (options.list) return printAvailable(info, options.json);
   if (!info.version) {
     console.error("oat: opencode is not installed; run `oat install opencode`");
     return 1;
@@ -533,6 +578,7 @@ export async function installOpencode(config: OatConfig, args: string[]): Promis
     return 0;
   }
   const info = resolveOpencodeInfo(config.opencodeBin);
+  if (options.list) return printAvailable(info, options.json);
   const plan = installPlan(info, options.method, options.version);
   if (!plan) {
     console.error("oat: cannot determine how to install opencode; pass --method npm");

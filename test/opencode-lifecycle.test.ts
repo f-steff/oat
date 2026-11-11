@@ -23,6 +23,7 @@ test("parseLifecycleArgs parses defaults and flags", () => {
 
   const parsed = parseLifecycleArgs([
     "--check",
+    "--list",
     "--method",
     "brew-core",
     "--version=2.0.24",
@@ -35,6 +36,7 @@ test("parseLifecycleArgs parses defaults and flags", () => {
     "--yes",
   ]);
   assert.equal(parsed.check, true);
+  assert.equal(parsed.list, true);
   assert.equal(parsed.method, "brew-core");
   assert.equal(parsed.version, "2.0.24");
   assert.equal(parsed.timeoutMs, 30_000);

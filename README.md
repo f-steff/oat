@@ -197,10 +197,17 @@ original directories (same `-s <session>`), and reload OAT.
 ```bash
 oat install opencode --check            # show the detected method and command
 oat install opencode                    # fresh install (auto: npm; macOS --method brew)
-oat update  opencode --check            # current/latest, active sessions, open TUIs
-oat update  opencode                    # wait for idle, update, relaunch
+oat update  opencode --list             # stable versions; installed/latest marked
+oat update  opencode --check --version 2.2.6
+oat update  opencode --version 2.2.6    # step to an exact version
+oat update  opencode                    # latest: wait for idle, update, relaunch
 oat restart opencode                    # restart the shared service + relaunch
 ```
+
+- **`--list`** (alias `--list-available`) prints the stable `@opencode/cli` versions from npm and marks
+  the installed and latest ones. `--list -json` prints JSON.
+- **`--version <x.y.z>`** pins an exact target, so you can step through releases (for example 2.2.5 →
+  2.2.6 → 2.2.7) and test between steps. `--version latest` is the default.
 
 - **Method `auto`** matches the binary OAT uses: npm global, Homebrew core/tap, or the official
   installer. Ambiguous installs require `--method`.

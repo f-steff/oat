@@ -175,8 +175,17 @@ OAT_BACKEND_VERSION=v1 OPENCODE_BIN="$HOME/.local/bin/oc-v1" oat start   # macOS
 ### With OAT (recommended, v2)
 
 ```bash
+oat update opencode --list    # stable versions (installed/latest marked)
 oat update opencode --check   # current/latest, method, active sessions, open TUIs
 oat update opencode           # wait for idle, update, restart the service, relaunch TUIs
+```
+
+To step through releases, pin each one:
+
+```bash
+oat update opencode --version 2.2.6
+# test the app/TUI
+oat update opencode --version 2.2.7
 ```
 
 `oat update opencode` waits for every session to become idle, gracefully closes the opencode TUIs,

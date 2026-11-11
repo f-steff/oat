@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   classifyMethod,
   installPlan,
+  listAvailableVersions,
   resolveOpencodeInfo,
   updatePlan,
   type OpencodeInfo,
@@ -71,4 +72,20 @@ test("resolveOpencodeInfo uses the resolved path and version", () => {
   });
   assert.equal(info.version, "opencode v2.0.22");
   assert.equal(info.method, "other");
+});
+
+test("listAvailableVersions keeps stable versions sorted and reads tags", () => {
+  const available = listAvailableVersions("opencode v2.2.5", {
+    platform: "linux",
+    exec: (_file, args) => {
+      if (args.includes("versions")) {
+        return JSON.stringify(["2.2.0", "2.2.6", "2.2.7", "2.2.6-internal.1", "2.2.5"]);
+      }
+      if (args.includes("dist-tags")) return JSON.stringify([{ latest: "2.2.7", beta: "0.0.0-beta" }]);
+      return "";
+    },
+  });
+  assert.deepEqual(available.versions, ["2.2.7", "2.2.6", "2.2.5", "2.2.0"]);
+  assert.equal(available.latest, "2.2.7");
+  assert.equal(available.installed, "2.2.5");
 });
